@@ -16,9 +16,9 @@
   --fh:'Fraunces',Georgia,serif;--fb:'DM Sans',sans-serif;--fm:'DM Mono',monospace;
 }
 body[data-theme="light"]{
-  --bg:#eceee4;--surface:#ffffff;--surface2:#e4e6da;--border:#b9bcac;
-  --accent:#4d6b12;--accent2:#3a6b28;--text:#14150f;--muted:#4d503f;
-  --danger:#a12b2b;--ok:#3a6b28;--warn:#7a5205;--purple:#4d33a3;
+  --bg:#f3f5e9;--surface:#ffffff;--surface2:#eaedd9;--border:#b4b89f;
+  --accent:#5b8a12;--accent2:#2f7a52;--text:#12140a;--muted:#565a44;
+  --danger:#b3261e;--ok:#2f7a52;--warn:#8a5b05;--purple:#5333b0;
 }
 body[data-theme="light"] .card-desc,
 body[data-theme="light"] .card-meta,
@@ -26,6 +26,28 @@ body[data-theme="light"] .cost-box-sub,
 body[data-theme="light"] .page-header p{color:#3a3c30}
 body[data-theme="light"] .ing-tag{color:#33351f}
 body[data-theme="light"] .status-badge{filter:saturate(1.3)}
+body[data-theme="light"] .card,
+body[data-theme="light"] .settings-box,
+body[data-theme="light"] .cost-box{
+  box-shadow:0 1px 3px rgba(20,30,10,.08), 0 1px 2px rgba(20,30,10,.06);
+  border-color:var(--border);
+}
+body[data-theme="light"] #sidebar{
+  background:linear-gradient(180deg,#ffffff,#f0f2e2);
+  border-right:1px solid var(--border);
+  box-shadow:1px 0 4px rgba(20,30,10,.05);
+}
+body[data-theme="light"] .logo-text{
+  background:linear-gradient(90deg,#3f6b0e,#2f7a52);
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+}
+body[data-theme="light"] .btn-primary{
+  box-shadow:0 2px 6px rgba(91,138,18,.28);
+}
+body[data-theme="light"] .nav-item.active{
+  background:linear-gradient(90deg,rgba(91,138,18,.14),rgba(91,138,18,.03));
+  border-left:2px solid var(--accent);
+}
 body{background:var(--bg);color:var(--text);font-family:var(--fb);min-height:100vh;display:flex;font-size:15px;line-height:1.5}
 #sidebar,#main{zoom:1.06}
 
@@ -1176,14 +1198,19 @@ function persistPriceDB(){
 function priceKey(s){ return String(s||"").trim().toLowerCase(); }
 // Arma la base de ingredientes: proveedor, último precio, fórmulas donde se usa
 function buildIngredientsIndex(){
-  const idx = {}; // key -> {nombre, proveedores:Set, precio, unidad, ts, formulas:Set}
+  const idx = {}; // key -> {nombre, inci, fase, proveedores:Set, precio, unidad, ts, formulas:Set}
   [...formulas].sort((a,b)=>(a.ts||0)-(b.ts||0)).forEach(f=>{
     (f.ingredientes||[]).forEach(i=>{
       const key = priceKey(i.nombre||i.inci); if(!key) return;
-      if(!idx[key]) idx[key] = {nombre:i.nombre||i.inci, proveedores:new Set(), precio:null, unidad:"g", ts:0, formulas:new Set()};
+      if(!idx[key]) idx[key] = {nombre:i.nombre||i.inci, inci:"", fase:"", proveedores:new Set(), precio:null, unidad:"g", ts:0, formulas:new Set()};
       const e = idx[key];
       if(i.proveedor) e.proveedores.add(i.proveedor);
-      if(i.precio && (f.ts||0)>=e.ts){ e.precio=i.precio; e.unidad=i.unidadCosto||"g"; e.ts=f.ts||0; }
+      if((f.ts||0)>=e.ts){
+        if(i.inci) e.inci = i.inci;
+        if(i.fase) e.fase = i.fase;
+        if(i.precio){ e.precio=i.precio; e.unidad=i.unidadCosto||"g"; }
+        e.ts=f.ts||0;
+      }
       e.formulas.add(f.nombre);
     });
   });
@@ -1233,7 +1260,7 @@ function renameIngredient(oldKey){
   applyIngredientRename(oldKey, nuevo.trim());
 }
 
-function applyIngredientRename(oldKey, nuevoNombre){
+async function applyIngredientRename(oldKey, nuevoNombre){
   const newKey = priceKey(nuevoNombre);
   formulas.forEach(f=>{
     (f.ingredientes||[]).forEach(i=>{
@@ -1243,10 +1270,11 @@ function applyIngredientRename(oldKey, nuevoNombre){
   if(priceDB[oldKey] && !priceDB[newKey]){ priceDB[newKey]=priceDB[oldKey]; }
   if(oldKey!==newKey) delete priceDB[oldKey];
   persist(); persistPriceDB(); renderIngredientsDB();
+  if(window.__forceFirestoreSyncNow) await window.__forceFirestoreSyncNow();
 }
 
 // Unifica 2+ ingredientes seleccionados en un solo nombre canónico
-function mergeSelectedIngredients(){
+async function mergeSelectedIngredients(){
   const keys = [...document.querySelectorAll(".ingdb-check:checked")].map(c=>c.value);
   if(keys.length<2) return;
   const idx = buildIngredientsIndex();
@@ -1256,7 +1284,12 @@ function mergeSelectedIngredients(){
   const canonTrim = canon.trim();
   keys.forEach(k=>applyIngredientRename_noRerender(k, canonTrim));
   persist(); persistPriceDB(); renderIngredientsDB();
-  alert("Ingredientes unificados.");
+  if(window.__forceFirestoreSyncNow){
+    const ok = await window.__forceFirestoreSyncNow();
+    alert(ok ? "Ingredientes unificados y guardados." : "Se unificaron localmente, pero hubo un error al guardar en la nube. Vuelve a intentarlo antes de cerrar esta pestaña.");
+  } else {
+    alert("Ingredientes unificados.");
+  }
 }
 function applyIngredientRename_noRerender(oldKey, nuevoNombre){
   const newKey = priceKey(nuevoNombre);
@@ -1270,7 +1303,7 @@ function applyIngredientRename_noRerender(oldKey, nuevoNombre){
 }
 
 // Elimina un ingrediente de la base de precios (no lo borra de fórmulas ya creadas, solo deja de aparecer como "en existencia")
-function deleteIngredientFromDB(key){
+async function deleteIngredientFromDB(key){
   const idx = buildIngredientsIndex();
   const nombre = idx[key]?.nombre || key;
   const enUso = idx[key]?.formulas?.size || 0;
@@ -1280,6 +1313,7 @@ function deleteIngredientFromDB(key){
   if(!confirm(msg)) return;
   delete priceDB[key];
   persistPriceDB(); renderIngredientsDB();
+  if(window.__forceFirestoreSyncNow) await window.__forceFirestoreSyncNow();
 }
 
 // Exporta solo la tabla de ingredientes (no las fórmulas completas) como CSV
@@ -1326,6 +1360,50 @@ window.addEventListener("load", ()=>{
   const h = location.hash.replace("#","");
   if(h==="inci" || h==="ingredientsdb") setTimeout(()=>showView(h),50);
 });
+
+let aiChatHistory = [];
+
+function toggleAiChat(){
+  const panel = document.getElementById("ai-chat-panel");
+  const open = panel.style.display === "flex";
+  panel.style.display = open ? "none" : "flex";
+  if(!open) document.getElementById("ai-chat-input")?.focus();
+}
+
+function aiChatAppend(role, text){
+  const log = document.getElementById("ai-chat-log");
+  const bubble = document.createElement("div");
+  bubble.style.cssText = role==="user"
+    ? "align-self:flex-end;background:var(--accent);color:#0e0f0c;padding:6px 10px;border-radius:10px 10px 2px 10px;max-width:85%;white-space:pre-wrap;"
+    : "align-self:flex-start;background:var(--surface2);color:var(--text);padding:6px 10px;border-radius:10px 10px 10px 2px;max-width:85%;white-space:pre-wrap;";
+  bubble.textContent = text;
+  log.appendChild(bubble);
+  log.scrollTop = log.scrollHeight;
+  return bubble;
+}
+
+async function sendAiChat(){
+  const input = document.getElementById("ai-chat-input");
+  const q = input.value.trim();
+  if(!q) return;
+  input.value = "";
+  aiChatAppend("user", q);
+  const thinking = aiChatAppend("ai", "Pensando…");
+  aiChatHistory.push({role:"user", content:q});
+
+  const contexto = `Eres el asistente de FormuLab, la app de formulación cosmética de Frescura Natural Cosméticos.
+Ayuda con preguntas rápidas de formulación, ingredientes cosméticos, INCI, fases (A-Acuosa, B-Oleosa, C-Emulsión, D-Final, E-Activos, F-Sólido), cálculos de porcentajes/lotes, y dudas generales de la app.
+Responde en español, corto y directo (máx. 4-5 líneas salvo que pidan más detalle). No inventes datos de seguridad regulatoria críticos sin aclarar que deben verificarse con fuentes oficiales (IFRA, CIR, INVIMA).`;
+
+  try{
+    const res = await callGroq(aiChatHistory.slice(-8), contexto, 500);
+    thinking.textContent = res;
+    aiChatHistory.push({role:"assistant", content:res});
+  }catch(err){
+    thinking.textContent = "⚠ " + (err.message || "No se pudo responder. Intenta de nuevo.");
+  }
+}
+
 
 
 // Registra/actualiza el precio de un ingrediente en la base global
@@ -1720,7 +1798,7 @@ function editFormula(id){
 function addIngRow(data){
   const id=uid(); const tr=document.createElement("tr"); tr.dataset.id=id;
   tr.innerHTML=`
-    <td><input class="input" list="dl-ing-nombres" placeholder="Nombre" value="${esc(data?.nombre||'')}" oninput="updatePct()" onblur="autofillPrice(this.closest('tr'))"></td>
+    <td><input class="input" list="dl-ing-nombres" placeholder="Nombre" value="${esc(data?.nombre||'')}" oninput="updatePct(); debounceAutofill(this.closest('tr'))" onblur="autofillPrice(this.closest('tr'))"></td>
     <td><input class="input" placeholder="INCI" value="${esc(data?.inci||'')}" onblur="autofillPrice(this.closest('tr'))"></td>
     <td><input class="input" list="dl-proveedores" placeholder="Proveedor" value="${esc(data?.proveedor||'')}"></td>
     <td><select class="input">${PHASES.map(p=>`<option value="${p}"${(data?.fase||'')==p?" selected":""}>${p||"—"}</option>`).join("")}</select></td>
@@ -1740,20 +1818,29 @@ function addIngRow(data){
 
 // Autocompleta precio/unidad de un ingrediente si ya existe en la base histórica.
 // Solo rellena si el campo de precio está vacío (no sobreescribe algo que el usuario ya puso).
+let __autofillTimer = null;
+function debounceAutofill(tr){
+  clearTimeout(__autofillTimer);
+  __autofillTimer = setTimeout(()=>autofillPrice(tr), 400);
+}
 function autofillPrice(tr){
   if(!tr) return;
   const inputs = tr.querySelectorAll("input");
   const sels   = tr.querySelectorAll("select");
   const nombre = inputs[0]?.value.trim();
-  const inci   = inputs[1]?.value.trim();
+  const inciInput   = inputs[1];
   const precioInput = inputs[4];
+  const faseSel     = sels[0];
   const unidadSel   = sels[1];
-  if(!nombre && !inci) return;
-  if(precioInput && precioInput.value) return; // ya tiene precio, no tocar
-  const found = lookupPrice(nombre, inci);
-  if(found){
-    if(precioInput) precioInput.value = found.precio;
-    if(unidadSel)   unidadSel.value   = found.unidadCosto||"g";
+  if(!nombre) return;
+  const idx = buildIngredientsIndex();
+  const found = idx[priceKey(nombre)];
+  if(!found) return;
+  if(inciInput && !inciInput.value && found.inci) inciInput.value = found.inci;
+  if(faseSel && !faseSel.value && found.fase) faseSel.value = found.fase;
+  if(precioInput && !precioInput.value && found.precio){
+    precioInput.value = found.precio;
+    if(unidadSel) unidadSel.value = found.unidad||"g";
     updateCosts();
   }
 }
@@ -3021,6 +3108,29 @@ persist(); renderCards(); checkApiBanner(); renderKeyStatus();
   </div>
 </div>
 
+<!-- QUICK AI CHAT WIDGET -->
+<button id="ai-chat-fab" onclick="toggleAiChat()"
+  style="position:fixed;bottom:20px;right:20px;z-index:700;width:52px;height:52px;border-radius:50%;
+  background:var(--accent);color:#0e0f0c;border:none;font-size:22px;cursor:pointer;
+  box-shadow:0 4px 14px rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;">💬</button>
+
+<div id="ai-chat-panel" style="display:none;position:fixed;bottom:82px;right:20px;z-index:700;
+  width:320px;max-width:90vw;height:420px;max-height:70vh;background:var(--surface);
+  border:1px solid var(--border);border-radius:12px;box-shadow:0 10px 40px rgba(0,0,0,.4);
+  display:flex;flex-direction:column;overflow:hidden;">
+  <div style="padding:10px 14px;background:var(--surface2);border-bottom:1px solid var(--border);
+    display:flex;justify-content:space-between;align-items:center;">
+    <strong style="font-family:var(--fh);font-weight:500;font-size:14px;">Asistente FormuLab</strong>
+    <button onclick="toggleAiChat()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:16px;">✕</button>
+  </div>
+  <div id="ai-chat-log" style="flex:1;overflow-y:auto;padding:10px;font-size:13px;display:flex;flex-direction:column;gap:8px;"></div>
+  <div style="padding:8px;border-top:1px solid var(--border);display:flex;gap:6px;">
+    <input id="ai-chat-input" class="input" placeholder="Pregunta rápida…" style="flex:1"
+      onkeydown="if(event.key==='Enter') sendAiChat()">
+    <button class="btn btn-primary btn-sm" onclick="sendAiChat()">➤</button>
+  </div>
+</div>
+
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
   import {
@@ -3085,6 +3195,34 @@ persist(); renderCards(); checkApiBanner(); renderKeyStatus();
     }, 1200);
   }
   window.__scheduleFirestoreSync = scheduleFirestoreSync;
+
+  // Guardado inmediato, sin espera de 1.2s — para acciones deliberadas de un clic
+  // (unificar/eliminar ingredientes) donde el usuario podría cerrar la pestaña enseguida.
+  async function forceFirestoreSyncNow(){
+    const user = auth.currentUser;
+    if(!user) return false;
+    clearTimeout(syncTimer);
+    setSaveStatus("Guardando…", "");
+    try{
+      await setDoc(doc(db, "users", user.uid), {
+        formulas, categories, priceDB,
+        updatedAt: serverTimestamp()
+      });
+      lastRemoteFormulaCount = formulas.length;
+      const hora = new Date().toLocaleTimeString("es-CO",{hour:"2-digit",minute:"2-digit"});
+      setSaveStatus(`Guardado ✓ ${hora}`, "ok");
+      return true;
+    }catch(err){
+      console.error("Error guardando en Firestore:", err);
+      setSaveStatus("Error al guardar ⚠", "err");
+      return false;
+    }
+  }
+  window.__forceFirestoreSyncNow = forceFirestoreSyncNow;
+
+  window.addEventListener("beforeunload", (e)=>{
+    if(syncTimer){ e.preventDefault(); e.returnValue = ""; }
+  });
 
   async function loadFromFirestore(uid){
     const ref = doc(db, "users", uid);
