@@ -345,10 +345,13 @@ select.input{cursor:pointer;appearance:none;
   border:none;border-radius:8px;padding:8px 18px;cursor:pointer;font-size:13px;font-weight:500}
 
 @media(max-width:768px){
-  #sidebar{display:none}#main{padding:22px 14px}
+  #sidebar{position:fixed;z-index:600;left:0;top:0;bottom:0;transform:translateX(-100%);transition:transform .2s}
+  #sidebar.mobile-open{transform:translateX(0)}
+  #main{padding:22px 14px 22px 54px}
   .formula-grid{grid-template-columns:1fr}.g2,.g3,.g4{grid-template-columns:1fr}
   .lote-row,.lote-total{grid-template-columns:2fr 55px 70px}
   .l-inci{display:none}
+  #mobile-menu-btn{display:flex !important}
 }
 </style>
 </head>
@@ -410,6 +413,10 @@ select.input{cursor:pointer;appearance:none;
 </div>
 
 <div id="print-frame"></div>
+<button id="mobile-menu-btn" onclick="document.getElementById('sidebar').classList.toggle('mobile-open')"
+  style="display:none;position:fixed;top:14px;left:14px;z-index:601;width:34px;height:34px;border-radius:8px;border:1px solid var(--border);background:var(--panel,#171813);color:#c8f04a;align-items:center;justify-content:center;cursor:pointer;font-size:16px">☰</button>
+<datalist id="dl-ing-nombres"></datalist>
+<datalist id="dl-proveedores"></datalist>
 <aside id="sidebar">
   <div class="logo">
     <svg width="34" height="34" viewBox="0 0 34 34" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -433,6 +440,7 @@ select.input{cursor:pointer;appearance:none;
       <div style="font-size:9px;color:var(--muted);line-height:1.3;margin-top:2px;letter-spacing:.01em;max-width:140px">
         Laboratorio Virtual de Formulación · Frescura Natural Cosméticos
       </div>
+      <div id="save-status" style="font-size:10px;margin-top:4px;color:var(--muted)">—</div>
     </div>
   </div>
   <nav>
@@ -443,7 +451,8 @@ select.input{cursor:pointer;appearance:none;
     <div class="nav-cats" id="nav-cats"></div>
     <button class="nav-item" onclick="showView('categories')">🗂️ Gestionar categorías</button>
     <div class="nav-section">Herramientas</div>
-    <button class="nav-item" onclick="showView('inci')">🔍 Buscador INCI</button>
+    <button class="nav-item" onclick="openViewNewTab('ingredientsdb')">🧫 Base de ingredientes ↗</button>
+    <button class="nav-item" onclick="openViewNewTab('inci')">🔍 Buscador INCI ↗</button>
     <button class="nav-item" onclick="showView('settings')">⚙️ Ajustes</button>
     <button class="nav-item" id="theme-toggle-btn" onclick="toggleTheme()">🌙 Modo claro</button>
   </nav>
@@ -800,6 +809,31 @@ select.input{cursor:pointer;appearance:none;
   <div class="error-msg" id="inci-error-s" style="display:none"></div>
 </div>
 
+<!-- INGREDIENTS DB -->
+<div id="view-ingredientsdb" class="view">
+  <div class="page-header"><h1>Base de ingredientes</h1><p>Producto, proveedor, último precio y en qué fórmulas se usa.</p></div>
+  <div class="toolbar">
+    <input class="input" id="ingdb-search" placeholder="Buscar ingrediente…" oninput="renderIngredientsDB()" style="max-width:280px">
+    <button class="btn btn-ghost btn-sm" id="ingdb-merge-btn" onclick="mergeSelectedIngredients()" style="display:none">🔗 Unificar seleccionados</button>
+    <button class="btn btn-ghost btn-sm" onclick="exportIngredientsCSV()">↓ Exportar tabla (CSV)</button>
+  </div>
+  <div style="overflow-x:auto">
+    <table class="input" style="width:100%;border-collapse:collapse">
+      <thead>
+        <tr style="text-align:left;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border)">
+          <th style="padding:8px 6px"><input type="checkbox" id="ingdb-select-all" onchange="toggleAllIngdb(this.checked)"></th>
+          <th style="padding:8px 6px">Ingrediente</th>
+          <th style="padding:8px 6px">Proveedor</th>
+          <th style="padding:8px 6px">Último precio</th>
+          <th style="padding:8px 6px">Usado en</th>
+          <th style="padding:8px 6px"></th>
+        </tr>
+      </thead>
+      <tbody id="ingdb-tbody"></tbody>
+    </table>
+  </div>
+</div>
+
 <!-- SETTINGS -->
 <div id="view-settings" class="view">
   <div class="page-header"><h1>Ajustes</h1></div>
@@ -1131,7 +1165,7 @@ function load(k){ try{ return JSON.parse(localStorage.getItem(k)); }catch{ retur
 function persist(){
   localStorage.setItem("cosmolab_v4", JSON.stringify(formulas));
   localStorage.setItem("cosmolab_cats", JSON.stringify(categories));
-  updateStats(); renderSidebarCats();
+  updateStats(); renderSidebarCats(); refreshAutocompleteLists();
   if(window.__scheduleFirestoreSync) window.__scheduleFirestoreSync();
 }
 function persistPriceDB(){
@@ -1140,6 +1174,160 @@ function persistPriceDB(){
 }
 // Clave normalizada para buscar coincidencias por nombre o INCI
 function priceKey(s){ return String(s||"").trim().toLowerCase(); }
+// Arma la base de ingredientes: proveedor, último precio, fórmulas donde se usa
+function buildIngredientsIndex(){
+  const idx = {}; // key -> {nombre, proveedores:Set, precio, unidad, ts, formulas:Set}
+  [...formulas].sort((a,b)=>(a.ts||0)-(b.ts||0)).forEach(f=>{
+    (f.ingredientes||[]).forEach(i=>{
+      const key = priceKey(i.nombre||i.inci); if(!key) return;
+      if(!idx[key]) idx[key] = {nombre:i.nombre||i.inci, proveedores:new Set(), precio:null, unidad:"g", ts:0, formulas:new Set()};
+      const e = idx[key];
+      if(i.proveedor) e.proveedores.add(i.proveedor);
+      if(i.precio && (f.ts||0)>=e.ts){ e.precio=i.precio; e.unidad=i.unidadCosto||"g"; e.ts=f.ts||0; }
+      e.formulas.add(f.nombre);
+    });
+  });
+  // Completa precio con priceDB si una fila no tiene precio propio
+  Object.keys(idx).forEach(k=>{
+    if(!idx[k].precio && priceDB[k]){ idx[k].precio = priceDB[k].precio; idx[k].unidad = priceDB[k].unidadCosto||"g"; }
+  });
+  return idx;
+}
+
+function renderIngredientsDB(){
+  const tbody = document.getElementById("ingdb-tbody"); if(!tbody) return;
+  const q = (document.getElementById("ingdb-search")?.value||"").toLowerCase();
+  const idx = buildIngredientsIndex();
+  let rows = Object.entries(idx).map(([key,r])=>({key,...r}));
+  if(q) rows = rows.filter(r=>r.nombre.toLowerCase().includes(q)||[...r.proveedores].some(p=>p.toLowerCase().includes(q)));
+  rows.sort((a,b)=>a.nombre.localeCompare(b.nombre));
+  if(!rows.length){ tbody.innerHTML = `<tr><td colspan="6" style="padding:16px;color:var(--muted)">Sin ingredientes.</td></tr>`; return; }
+  tbody.innerHTML = rows.map(r=>`
+    <tr style="border-bottom:1px solid var(--border)" data-key="${esc(r.key)}">
+      <td style="padding:8px 6px"><input type="checkbox" class="ingdb-check" value="${esc(r.key)}" onchange="updateMergeBtn()"></td>
+      <td style="padding:8px 6px" ondblclick="renameIngredient('${esc(r.key)}')" title="Doble clic para renombrar">${esc(r.nombre)}</td>
+      <td style="padding:8px 6px">${esc([...r.proveedores].join(", ")||"—")}</td>
+      <td style="padding:8px 6px;font-family:var(--fm)">${r.precio?fmtMoney(r.precio)+" / "+r.unidad:"—"}</td>
+      <td style="padding:8px 6px;font-size:11px;color:var(--muted)">${esc([...r.formulas].join(", "))}</td>
+      <td style="padding:8px 6px"><button class="btn btn-ghost btn-sm" onclick="deleteIngredientFromDB('${esc(r.key)}')" title="Eliminar de la base (no borra de fórmulas ya creadas)">🗑️</button></td>
+    </tr>`).join("");
+  updateMergeBtn();
+}
+
+function toggleAllIngdb(checked){
+  document.querySelectorAll(".ingdb-check").forEach(c=>c.checked=checked);
+  updateMergeBtn();
+}
+function updateMergeBtn(){
+  const n = document.querySelectorAll(".ingdb-check:checked").length;
+  const btn = document.getElementById("ingdb-merge-btn");
+  if(btn) btn.style.display = n>=2 ? "" : "none";
+}
+
+// Renombra un ingrediente (por su key) en priceDB y en todas las fórmulas que lo usan
+function renameIngredient(oldKey){
+  const idx = buildIngredientsIndex();
+  const current = idx[oldKey]?.nombre || oldKey;
+  const nuevo = prompt("Nuevo nombre para este ingrediente:", current);
+  if(!nuevo || !nuevo.trim() || nuevo.trim()===current) return;
+  applyIngredientRename(oldKey, nuevo.trim());
+}
+
+function applyIngredientRename(oldKey, nuevoNombre){
+  const newKey = priceKey(nuevoNombre);
+  formulas.forEach(f=>{
+    (f.ingredientes||[]).forEach(i=>{
+      if(priceKey(i.nombre||i.inci)===oldKey) i.nombre = nuevoNombre;
+    });
+  });
+  if(priceDB[oldKey] && !priceDB[newKey]){ priceDB[newKey]=priceDB[oldKey]; }
+  if(oldKey!==newKey) delete priceDB[oldKey];
+  persist(); persistPriceDB(); renderIngredientsDB();
+}
+
+// Unifica 2+ ingredientes seleccionados en un solo nombre canónico
+function mergeSelectedIngredients(){
+  const keys = [...document.querySelectorAll(".ingdb-check:checked")].map(c=>c.value);
+  if(keys.length<2) return;
+  const idx = buildIngredientsIndex();
+  const nombres = keys.map(k=>idx[k]?.nombre||k);
+  const canon = prompt(`Vas a unificar:\n${nombres.join("\n")}\n\nEscribe el nombre final que quieres usar para todos:`, nombres[0]);
+  if(!canon || !canon.trim()) return;
+  const canonTrim = canon.trim();
+  keys.forEach(k=>applyIngredientRename_noRerender(k, canonTrim));
+  persist(); persistPriceDB(); renderIngredientsDB();
+  alert("Ingredientes unificados.");
+}
+function applyIngredientRename_noRerender(oldKey, nuevoNombre){
+  const newKey = priceKey(nuevoNombre);
+  formulas.forEach(f=>{
+    (f.ingredientes||[]).forEach(i=>{
+      if(priceKey(i.nombre||i.inci)===oldKey) i.nombre = nuevoNombre;
+    });
+  });
+  if(priceDB[oldKey] && !priceDB[newKey]){ priceDB[newKey]=priceDB[oldKey]; }
+  if(oldKey!==newKey) delete priceDB[oldKey];
+}
+
+// Elimina un ingrediente de la base de precios (no lo borra de fórmulas ya creadas, solo deja de aparecer como "en existencia")
+function deleteIngredientFromDB(key){
+  const idx = buildIngredientsIndex();
+  const nombre = idx[key]?.nombre || key;
+  const enUso = idx[key]?.formulas?.size || 0;
+  const msg = enUso>0
+    ? `"${nombre}" se usa en ${enUso} fórmula(s). Se eliminará de la base de precios/proveedor (deja de estar "en existencia"), pero seguirá apareciendo en esas fórmulas ya guardadas. ¿Continuar?`
+    : `¿Eliminar "${nombre}" de la base de ingredientes?`;
+  if(!confirm(msg)) return;
+  delete priceDB[key];
+  persistPriceDB(); renderIngredientsDB();
+}
+
+// Exporta solo la tabla de ingredientes (no las fórmulas completas) como CSV
+function exportIngredientsCSV(){
+  const idx = buildIngredientsIndex();
+  const rows = Object.values(idx).sort((a,b)=>a.nombre.localeCompare(b.nombre));
+  const esc2 = s => `"${String(s??"").replace(/"/g,'""')}"`;
+  const header = ["Ingrediente","Proveedor","Último precio","Unidad","Usado en"];
+  const lines = [header.join(",")];
+  rows.forEach(r=>{
+    lines.push([
+      esc2(r.nombre),
+      esc2([...r.proveedores].join("; ")),
+      esc2(r.precio||""),
+      esc2(r.unidad||""),
+      esc2([...r.formulas].join("; "))
+    ].join(","));
+  });
+  const blob = new Blob(["\uFEFF"+lines.join("\n")], {type:"text/csv;charset=utf-8"});
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+  a.download = `ingredientes_${new Date().toISOString().slice(0,10)}.csv`; a.click();
+}
+
+// Refresca los <datalist> de autocompletado con lo ya almacenado
+function refreshAutocompleteLists(){
+  const nombres = new Set(), proveedores = new Set();
+  formulas.forEach(f=>(f.ingredientes||[]).forEach(i=>{
+    if(i.nombre) nombres.add(i.nombre);
+    if(i.proveedor) proveedores.add(i.proveedor);
+  }));
+  const dlN = document.getElementById("dl-ing-nombres");
+  const dlP = document.getElementById("dl-proveedores");
+  if(dlN) dlN.innerHTML = [...nombres].map(n=>`<option value="${esc(n)}">`).join("");
+  if(dlP) dlP.innerHTML = [...proveedores].map(p=>`<option value="${esc(p)}">`).join("");
+}
+
+// Abre una vista en una pestaña nueva del navegador (no interrumpe lo que se está editando)
+function openViewNewTab(viewName){
+  const base = location.href.split("#")[0];
+  window.open(base + "#" + viewName, "_blank");
+}
+// Si la app se abre con #vista en la URL, muestra esa vista directo
+window.addEventListener("load", ()=>{
+  const h = location.hash.replace("#","");
+  if(h==="inci" || h==="ingredientsdb") setTimeout(()=>showView(h),50);
+});
+
+
 // Registra/actualiza el precio de un ingrediente en la base global
 function rememberPrice(nombre, inci, precio, unidadCosto){
   if(!precio) return;
@@ -1196,14 +1384,29 @@ function costoAGramo(precio, unidad, densidad){
 // API
 // ═══════════════════════════════════════════════
 async function callGroq(messages, system, maxTokens=1500){
-  const res = await fetch("/api/groq",{
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({ messages, system, maxTokens })
-  });
-  if (!res.ok){ const e=await res.json().catch(()=>({})); throw new Error(e?.error||"HTTP "+res.status); }
-  const d = await res.json();
-  return d.content||"";
+  async function attempt(){
+    const res = await fetch("/api/groq",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({ messages, system, maxTokens })
+    });
+    if (!res.ok){ const e=await res.json().catch(()=>({})); throw new Error(e?.error||"HTTP "+res.status); }
+    const d = await res.json();
+    return d.content||"";
+  }
+  try{
+    return await attempt();
+  }catch(err){
+    // Un reintento automático ante timeouts/errores transitorios
+    try{
+      return await attempt();
+    }catch(err2){
+      const msg = /fetch|network|failed to fetch/i.test(err2.message)
+        ? "No se pudo conectar con el servicio de IA. Revisa tu conexión e intenta de nuevo."
+        : "El servicio de IA no respondió correctamente. Intenta de nuevo en un momento.";
+      throw new Error(msg);
+    }
+  }
 }
 
 // ═══════════════════════════════════════════════
@@ -1220,6 +1423,7 @@ function showView(name){
   if(name==="home")      renderCards();
   if(name==="categories") renderCatsView();
   if(name==="settings")  renderKeyStatus();
+  if(name==="ingredientsdb") renderIngredientsDB();
 }
 
 function setFilter(val){
@@ -1262,7 +1466,7 @@ function renderCards(){
   const sortBy = document.getElementById("sort-by")?.value||"fecha";
   let list=[...formulas];
   if(activeFilter!=="all") list=list.filter(f=>f.categoriaId===activeFilter);
-  if(q) list=list.filter(f=>f.nombre.toLowerCase().includes(q)||(f.descripcion||"").toLowerCase().includes(q)||(categories.find(c=>c.id===f.categoriaId)?.nombre||"").toLowerCase().includes(q));
+  if(q) list=list.filter(f=>f.nombre.toLowerCase().includes(q)||(f.descripcion||"").toLowerCase().includes(q)||(categories.find(c=>c.id===f.categoriaId)?.nombre||"").toLowerCase().includes(q)||f.ingredientes.some(i=>(i.nombre||"").toLowerCase().includes(q)||(i.inci||"").toLowerCase().includes(q)||(i.proveedor||"").toLowerCase().includes(q)));
   if(status) list=list.filter(f=>(f.status||"borrador")===status);
   if(sortBy==="nombre") list.sort((a,b)=>a.nombre.localeCompare(b.nombre));
   else if(sortBy==="costo") list.sort((a,b)=>(a.costoPer100||0)-(b.costoPer100||0));
@@ -1516,9 +1720,9 @@ function editFormula(id){
 function addIngRow(data){
   const id=uid(); const tr=document.createElement("tr"); tr.dataset.id=id;
   tr.innerHTML=`
-    <td><input class="input" placeholder="Nombre" value="${esc(data?.nombre||'')}" oninput="updatePct()" onblur="autofillPrice(this.closest('tr'))"></td>
+    <td><input class="input" list="dl-ing-nombres" placeholder="Nombre" value="${esc(data?.nombre||'')}" oninput="updatePct()" onblur="autofillPrice(this.closest('tr'))"></td>
     <td><input class="input" placeholder="INCI" value="${esc(data?.inci||'')}" onblur="autofillPrice(this.closest('tr'))"></td>
-    <td><input class="input" placeholder="Proveedor" value="${esc(data?.proveedor||'')}"></td>
+    <td><input class="input" list="dl-proveedores" placeholder="Proveedor" value="${esc(data?.proveedor||'')}"></td>
     <td><select class="input">${PHASES.map(p=>`<option value="${p}"${(data?.fase||'')==p?" selected":""}>${p||"—"}</option>`).join("")}</select></td>
     <td><input class="input" type="number" placeholder="%" min="0" max="100" step="0.01" value="${data?.porcentaje||''}" oninput="updatePct()"></td>
     <td><input class="input" type="number" placeholder="0" min="0" step="any" value="${data?.precio||''}" oninput="updateCosts()" style="font-family:var(--fm);width:100%"></td>
@@ -2845,11 +3049,25 @@ persist(); renderCards(); checkApiBanner(); renderKeyStatus();
 
   let syncTimer = null;
   let applyingRemote = false;
+  let lastRemoteFormulaCount = null;
+
+  function setSaveStatus(text, cls){
+    const el = document.getElementById("save-status");
+    if(!el) return;
+    el.textContent = text;
+    el.style.color = cls==="err" ? "#ff6b6b" : cls==="ok" ? "#7dde52" : "var(--muted)";
+  }
 
   function scheduleFirestoreSync(){
     if(applyingRemote) return; // evita loop justo después de aplicar datos remotos
     const user = auth.currentUser;
     if(!user) return;
+    // Protección: si el conteo de fórmulas cae drásticamente frente a lo último visto en Firestore, confirmar
+    if(lastRemoteFormulaCount!=null && formulas.length < lastRemoteFormulaCount * 0.6){
+      const ok = confirm(`Vas a guardar ${formulas.length} fórmulas, pero en la nube había ${lastRemoteFormulaCount}. ¿Seguro que quieres sobrescribir?`);
+      if(!ok) return;
+    }
+    setSaveStatus("Guardando…", "");
     clearTimeout(syncTimer);
     syncTimer = setTimeout(async () => {
       try{
@@ -2857,8 +3075,12 @@ persist(); renderCards(); checkApiBanner(); renderKeyStatus();
           formulas, categories, priceDB,
           updatedAt: serverTimestamp()
         });
+        lastRemoteFormulaCount = formulas.length;
+        const hora = new Date().toLocaleTimeString("es-CO",{hour:"2-digit",minute:"2-digit"});
+        setSaveStatus(`Guardado ✓ ${hora}`, "ok");
       }catch(err){
         console.error("Error guardando en Firestore:", err);
+        setSaveStatus("Error al guardar ⚠", "err");
       }
     }, 1200);
   }
@@ -2873,13 +3095,22 @@ persist(); renderCards(); checkApiBanner(); renderKeyStatus();
       formulas   = data.formulas   || [];
       categories = data.categories || [];
       priceDB    = data.priceDB    || {};
+      lastRemoteFormulaCount = formulas.length;
     } else {
       // Primer login: sube lo que haya en este dispositivo como base inicial
       await setDoc(ref, { formulas, categories, priceDB, updatedAt: serverTimestamp() });
+      lastRemoteFormulaCount = formulas.length;
     }
     persist();      // refresca localStorage (cache offline) + stats + sidebar
     persistPriceDB();
     if(typeof renderCards === "function") renderCards();
+    if(typeof refreshAutocompleteLists === "function") refreshAutocompleteLists();
+    setSaveStatus(`Sincronizado ✓ (${formulas.length} fórmulas)`, "ok");
+    // Auto-backup silencioso al abrir sesión, una vez por sesión
+    if(!window.__autoBackupDone && typeof exportAll === "function" && formulas.length){
+      window.__autoBackupDone = true;
+      try{ exportAll(); }catch{}
+    }
     applyingRemote = false;
   }
 
