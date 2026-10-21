@@ -404,15 +404,21 @@ select.input{cursor:pointer;appearance:none;
   </div>
   <nav>
     <div class="nav-section">Biblioteca</div>
-    <button class="nav-item active" onclick="showView('home');setFilter('all')">🧪 Todas las fórmulas</button>
-    <button class="nav-item" onclick="showView('editor')">➕ Nueva fórmula</button>
+    <button class="nav-item active" data-view="home" onclick="showView('home');setFilter('all')">🧪 Todas las fórmulas</button>
+    <button class="nav-item" data-view="editor" onclick="showView('editor')">➕ Nueva fórmula</button>
     <div class="nav-section">Categorías</div>
     <div class="nav-cats" id="nav-cats"></div>
-    <button class="nav-item" onclick="showView('categories')">🗂️ Gestionar categorías</button>
+    <button class="nav-item" data-view="categories" onclick="showView('categories')">🗂️ Gestionar categorías</button>
     <div class="nav-section">Herramientas & ERP</div>
-    <button class="nav-item" onclick="openViewNewTab('ingredientsdb')">📦 Insumos & ERP ↗</button>
-    <button class="nav-item" onclick="openViewNewTab('inci')">🔍 Buscador INCI ↗</button>
-    <button class="nav-item" onclick="showView('settings')">⚙️ Ajustes & Integraciones</button>
+    <div style="display:flex;align-items:center;gap:2px">
+      <button class="nav-item" data-view="ingredientsdb" onclick="showView('ingredientsdb')" style="flex:1">📦 Insumos & ERP</button>
+      <button class="btn-icon" title="Abrir en pestaña nueva" onclick="openViewNewTab('ingredientsdb')" style="padding:6px 6px;font-size:12px;opacity:.7">↗</button>
+    </div>
+    <div style="display:flex;align-items:center;gap:2px">
+      <button class="nav-item" data-view="inci" onclick="showView('inci')" style="flex:1">🔍 Buscador INCI</button>
+      <button class="btn-icon" title="Abrir en pestaña nueva" onclick="openViewNewTab('inci')" style="padding:6px 6px;font-size:12px;opacity:.7">↗</button>
+    </div>
+    <button class="nav-item" data-view="settings" onclick="showView('settings')">⚙️ Ajustes & Integraciones</button>
     <button class="nav-item" id="theme-toggle-btn" onclick="toggleTheme()">🌙 Modo claro</button>
   </nav>
 
@@ -969,6 +975,61 @@ select.input{cursor:pointer;appearance:none;
       <button class="btn btn-ghost" onclick="closeModal('modal-edit-cat')">Cancelar</button>
       <button class="btn btn-primary" onclick="saveEditCat()">Guardar cambios</button>
     </div>
+  </div>
+</div>
+
+<!-- TOAST RECORDATORIO DE BACKUP PERIÓDICO (NO DESCARGA AUTOMÁTICA) -->
+<div id="backup-reminder-toast" style="display:none;position:fixed;bottom:24px;left:24px;z-index:800;
+  background:var(--surface);border:1px solid var(--warn);border-radius:12px;padding:14px 18px;
+  box-shadow:0 10px 30px rgba(0,0,0,.45);max-width:360px;font-size:13px;line-height:1.45;">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+    <div>
+      <strong style="color:var(--warn)">💾 Respaldo Recomendado</strong>
+      <p style="color:var(--muted);font-size:12px;margin-top:3px">Hace más de una semana que no guardas una copia local de tus fórmulas e insumos.</p>
+    </div>
+    <button onclick="dismissBackupReminder()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:16px;line-height:1">✕</button>
+  </div>
+  <div style="display:flex;gap:8px;margin-top:12px">
+    <button class="btn btn-primary btn-sm" onclick="acceptBackupReminder()">Descargar JSON</button>
+    <button class="btn btn-ghost btn-sm" onclick="dismissBackupReminder()">Recordar en 7 días</button>
+  </div>
+</div>
+
+<!-- MENSAJE DE BIENVENIDA DISCRETO DEL ASISTENTE DE IA (DURA UNOS SEGUNDOS) -->
+<div id="ai-chat-greeting" style="display:none;position:fixed;bottom:24px;right:84px;z-index:750;
+  background:var(--surface);border:1px solid var(--accent);border-radius:12px;padding:11px 15px;
+  box-shadow:0 8px 24px rgba(0,0,0,.4);font-size:12.5px;color:var(--text);max-width:270px;
+  line-height:1.4;transition:opacity .5s ease, transform .5s ease;opacity:0;transform:translateX(10px);cursor:pointer;"
+  onclick="toggleAiChat()">
+  <span style="color:var(--accent);font-weight:600">👋 ¡Hola!</span> Estoy aquí si necesitas ayuda con alguna fórmula o ingrediente.
+</div>
+
+<!-- ICONO FLOTANTE DEL ASISTENTE -->
+<button id="ai-chat-fab" onclick="toggleAiChat()" title="Asistente de Laboratorio"
+  style="position:fixed;bottom:20px;right:20px;z-index:700;width:52px;height:52px;border-radius:50%;
+  background:var(--accent);color:#0e0f0c;border:none;font-size:22px;cursor:pointer;
+  box-shadow:0 4px 16px rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;transition:transform .2s ease;"
+  onmouseenter="this.style.transform='scale(1.08)'" onmouseleave="this.style.transform='scale(1)'">💬</button>
+
+<!-- VENTANA DEL ASISTENTE (CERRADA POR DEFECTO) -->
+<div id="ai-chat-panel" style="display:none;position:fixed;bottom:82px;right:20px;z-index:760;
+  width:330px;max-width:90vw;height:430px;max-height:70vh;background:var(--surface);
+  border:1px solid var(--border);border-radius:12px;box-shadow:0 10px 40px rgba(0,0,0,.45);
+  display:flex;flex-direction:column;overflow:hidden;">
+  <div style="padding:10px 14px;background:var(--surface2);border-bottom:1px solid var(--border);
+    display:flex;justify-content:space-between;align-items:center;">
+    <strong style="font-family:var(--fh);font-weight:500;font-size:14px;color:var(--accent)">Asistente FormuLab</strong>
+    <button onclick="toggleAiChat()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:16px;">✕</button>
+  </div>
+  <div id="ai-chat-log" style="flex:1;overflow-y:auto;padding:12px;font-size:13px;display:flex;flex-direction:column;gap:8px;">
+    <div style="align-self:flex-start;background:var(--surface2);color:var(--muted);padding:8px 12px;border-radius:10px;font-size:12px;line-height:1.4">
+      Pregúntame sobre incompatibilidades químicas, rangos de uso de activos, reemplazo de insumos o cálculos.
+    </div>
+  </div>
+  <div style="padding:8px;border-top:1px solid var(--border);display:flex;gap:6px;background:var(--surface2)">
+    <input id="ai-chat-input" class="input" placeholder="Pregunta rápida…" style="flex:1;font-size:13px"
+      onkeydown="if(event.key==='Enter') sendAiChat()">
+    <button class="btn btn-primary btn-sm" onclick="sendAiChat()">➤</button>
   </div>
 </div>
 
@@ -2267,6 +2328,8 @@ function showView(name){
   if(viewEl) viewEl.classList.add("active");
 
   document.querySelectorAll(".nav-item").forEach(b=>b.classList.remove("active"));
+  document.querySelector(`.nav-item[data-view="${name}"]`)?.classList.add("active");
+
   if(name==="editor") openEditor(null);
   if(name==="home") renderCards();
   if(name==="categories") renderCatsView();
@@ -2630,11 +2693,38 @@ function deleteCategory(id){
 // BACKUP LOCAL JSON
 // ═══════════════════════════════════════════════
 function exportAll(){
+  localStorage.setItem("formulab_last_backup_time", Date.now().toString());
   const blob = new Blob([JSON.stringify({formulas, categories, priceDB, exportedAt:new Date().toISOString()}, null, 2)], {type:"application/json"});
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = `backup_formulab_${new Date().toISOString().slice(0,10)}.json`;
   a.click();
+}
+
+function checkBackupReminder(){
+  const lastBackup = parseInt(localStorage.getItem("formulab_last_backup_time")||"0", 10);
+  const lastPrompt = parseInt(localStorage.getItem("formulab_last_backup_prompt")||"0", 10);
+  const now = Date.now();
+  const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
+
+  // Si tiene fórmulas y han pasado más de 7 días desde el último respaldo y desde el último aviso
+  if(formulas.length > 0 && (now - lastBackup > SEVEN_DAYS) && (now - lastPrompt > SEVEN_DAYS)){
+    setTimeout(()=>{
+      const el = document.getElementById("backup-reminder-toast");
+      if(el) el.style.display = "block";
+    }, 3500);
+  }
+}
+
+function acceptBackupReminder(){
+  exportAll();
+  dismissBackupReminder();
+}
+
+function dismissBackupReminder(){
+  localStorage.setItem("formulab_last_backup_prompt", Date.now().toString());
+  const el = document.getElementById("backup-reminder-toast");
+  if(el) el.style.display = "none";
 }
 function importFormulas(){ document.getElementById("import-file").click(); }
 function handleImport(e){
@@ -2669,6 +2759,15 @@ function switchTab(prefix, name, btn){
   document.getElementById(`${prefix}-tab-${name}`).classList.add("active");
 }
 function openViewNewTab(name){ window.open(location.href.split("#")[0] + "#" + name, "_blank"); }
+
+function handleHashRoute(){
+  const h = (location.hash || "").replace("#","").trim();
+  if(h && document.getElementById("view-" + h)){
+    showView(h);
+  }
+}
+window.addEventListener("load", handleHashRoute);
+window.addEventListener("hashchange", handleHashRoute);
 function refreshAutocompleteLists(){
   const nSet = new Set(), pSet = new Set();
   formulas.forEach(f=>(f.ingredientes||[]).forEach(i=>{
@@ -2696,6 +2795,82 @@ document.body.setAttribute("data-theme", localStorage.getItem("formulab_theme")|
   ed.addEventListener("input", scheduleAutosave);
   ed.addEventListener("change", scheduleAutosave);
 })();
+
+// ═══════════════════════════════════════════════
+// ASISTENTE DE IA FLOTANTE (DISCRETO)
+// ═══════════════════════════════════════════════
+let aiChatHistory = [];
+
+function toggleAiChat(){
+  const greeting = document.getElementById("ai-chat-greeting");
+  if(greeting) greeting.style.display = "none";
+
+  const panel = document.getElementById("ai-chat-panel");
+  if(!panel) return;
+  const isCurrentlyOpen = panel.style.display === "flex";
+  panel.style.display = isCurrentlyOpen ? "none" : "flex";
+  if(!isCurrentlyOpen){
+    setTimeout(()=>document.getElementById("ai-chat-input")?.focus(), 60);
+  }
+}
+
+function showAiGreetingToast(){
+  const greeting = document.getElementById("ai-chat-greeting");
+  if(!greeting) return;
+  const panel = document.getElementById("ai-chat-panel");
+  if(panel && panel.style.display === "flex") return;
+
+  // Aparece suavemente a los 2 segundos de entrar
+  setTimeout(()=>{
+    greeting.style.display = "block";
+    setTimeout(()=>{
+      greeting.style.opacity = "1";
+      greeting.style.transform = "translateX(0)";
+    }, 50);
+
+    // Se oculta automáticamente tras 6 segundos
+    setTimeout(()=>{
+      greeting.style.opacity = "0";
+      greeting.style.transform = "translateX(10px)";
+      setTimeout(()=>{ greeting.style.display = "none"; }, 500);
+    }, 6000);
+  }, 2000);
+}
+
+function aiChatAppend(role, text){
+  const log = document.getElementById("ai-chat-log");
+  if(!log) return null;
+  const bubble = document.createElement("div");
+  bubble.style.cssText = role==="user"
+    ? "align-self:flex-end;background:var(--accent);color:#0e0f0c;padding:7px 11px;border-radius:10px 10px 2px 10px;max-width:85%;white-space:pre-wrap;font-size:12.5px;"
+    : "align-self:flex-start;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:7px 11px;border-radius:10px 10px 10px 2px;max-width:85%;white-space:pre-wrap;font-size:12.5px;";
+  bubble.textContent = text;
+  log.appendChild(bubble);
+  log.scrollTop = log.scrollHeight;
+  return bubble;
+}
+
+async function sendAiChat(){
+  const input = document.getElementById("ai-chat-input");
+  const q = input?.value?.trim();
+  if(!q) return;
+  input.value = "";
+  aiChatAppend("user", q);
+  const thinking = aiChatAppend("ai", "Consultando…");
+  aiChatHistory.push({role:"user", content:q});
+
+  const contexto = `Eres el asistente técnico de FormuLab de Frescura Natural Cosméticos (FNC).
+Ayuda con dudas rápidas de formulación, compatibilidad de ingredientes, fases galénicas (A-Acuosa, B-Oleosa, etc.), solubilidad y cálculos.
+Responde en español de forma concreta y concisa (máx. 3-4 líneas).`;
+
+  try{
+    const res = await callGroq(aiChatHistory.slice(-6), contexto, 450);
+    if(thinking) thinking.textContent = res;
+    aiChatHistory.push({role:"assistant", content:res});
+  }catch(err){
+    if(thinking) thinking.textContent = "⚠ " + (err.message || "No se pudo responder.");
+  }
+}
 </script>
 
 <!-- MODAL: EXPERTO SIMULADOR CHAT -->
@@ -2927,7 +3102,11 @@ async function sendChat(auto=false){
   onAuthStateChanged(auth, user => {
     if(user){
       overlay.style.display = "none";
-      loadDataFromFirestore(user.uid);
+      loadDataFromFirestore(user.uid).then(() => {
+        if(typeof handleHashRoute === "function") handleHashRoute();
+        if(typeof checkBackupReminder === "function") checkBackupReminder();
+        if(typeof showAiGreetingToast === "function") showAiGreetingToast();
+      });
     } else {
       overlay.style.display = "flex";
     }
