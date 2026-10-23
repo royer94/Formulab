@@ -853,9 +853,14 @@ select.input{cursor:pointer;appearance:none;
       <button class="btn btn-accent btn-sm" onclick="sendIngredientsDirectToERP()">📡 Enviar a API ERP</button>
     </div>
   </div>
-  <div class="toolbar">
-    <input class="input" id="ingdb-search" placeholder="Buscar por SKU, nombre o proveedor…" oninput="renderIngredientsDB()" style="max-width:280px">
-    <button class="btn btn-ghost btn-sm" id="ingdb-merge-btn" onclick="mergeSelectedIngredients()" style="display:none">🔗 Unificar seleccionados</button>
+  <div class="toolbar" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+    <div style="display:flex;gap:8px;align-items:center;flex:1;max-width:420px">
+      <input class="input" id="ingdb-search" placeholder="Buscar por SKU, nombre, INCI o proveedor…" oninput="renderIngredientsDB()" style="width:100%">
+    </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button class="btn btn-primary btn-sm" onclick="openModalNuevoInsumo()">+ Nuevo Insumo</button>
+      <button class="btn btn-ghost btn-sm" id="ingdb-merge-btn" onclick="mergeSelectedIngredients()" style="display:none">🔗 Unificar seleccionados</button>
+    </div>
   </div>
   <div style="overflow-x:auto">
     <table class="input" style="width:100%;border-collapse:collapse">
@@ -1063,6 +1068,84 @@ select.input{cursor:pointer;appearance:none;
         <button class="btn btn-accent btn-sm" onclick="addInciToForm()" style="margin-top:8px">+ Agregar a fórmula</button>
       </div>
       <div class="error-msg" id="inci-error-m" style="display:none"></div>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: NUEVO / EDITAR INSUMO -->
+<div class="modal-backdrop" id="modal-insumo">
+  <div class="modal-box" style="max-width:540px">
+    <div class="modal-header">
+      <div>
+        <span class="modal-title" id="modal-insumo-title">Nuevo Insumo</span>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px">Registro en el catálogo de materias primas & ERP</div>
+      </div>
+      <button class="modal-close" onclick="closeModal('modal-insumo')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="ins-edit-key" value="">
+      
+      <div>
+        <label class="fl">Nombre Comercial del Insumo *</label>
+        <input class="input" id="ins-nombre" placeholder="ej: Aceite de Argán Virgen" oninput="onInsumoNombreInput()">
+      </div>
+      
+      <div style="margin-top:10px">
+        <label class="fl">Nombre INCI Oficial</label>
+        <input class="input" id="ins-inci" placeholder="ej: Argania Spinosa Kernel Oil" onblur="onInsumoInciBlur()">
+      </div>
+
+      <div class="g2" style="margin-top:10px">
+        <div>
+          <label class="fl">Fase Predeterminada</label>
+          <select class="input" id="ins-fase">
+            <option value="">Sin fase predeterminada</option>
+            <option value="A - Acuosa">A - Acuosa</option>
+            <option value="B - Oleosa">B - Oleosa</option>
+            <option value="C - Emulsión">C - Emulsión</option>
+            <option value="D - Final">D - Final</option>
+            <option value="E - Activos">E - Activos</option>
+            <option value="F - Sólido">F - Sólido</option>
+          </select>
+        </div>
+        <div>
+          <label class="fl">Densidad (g/mL)</label>
+          <input class="input" type="number" id="ins-densidad" placeholder="1.000" step="0.001" min="0.1" style="font-family:var(--fm)">
+          <div style="font-size:10px;color:var(--muted);margin-top:2px">Sugerida automáticamente si coincide en catálogo</div>
+        </div>
+      </div>
+
+      <div class="g2" style="margin-top:10px">
+        <div>
+          <label class="fl">Último Costo Unitario</label>
+          <input class="input" type="number" id="ins-precio" placeholder="0" step="any" min="0" style="font-family:var(--fm)">
+        </div>
+        <div>
+          <label class="fl">Unidad de Costo</label>
+          <select class="input" id="ins-unidad">
+            <option value="g">/ g (gramo)</option>
+            <option value="mg">/ mg (miligramo)</option>
+            <option value="mL">/ mL (mililitro)</option>
+            <option value="uL">/ uL (microlitro)</option>
+          </select>
+        </div>
+      </div>
+
+      <div style="margin-top:10px">
+        <label class="fl">Proveedor Habitual</label>
+        <input class="input" id="ins-proveedor" list="dl-proveedores" placeholder="ej: Químicos del Valle SAS">
+      </div>
+
+      <div style="margin-top:10px">
+        <label class="fl">Código SKU ERP</label>
+        <input class="input" id="ins-sku" placeholder="Auto-generado (ej: MP-B-ARGA-8A2F)" style="font-family:var(--fm);font-size:12px">
+      </div>
+      
+      <div id="insumo-error-msg" style="color:var(--danger);font-size:12px;margin-top:10px;display:none"></div>
+    </div>
+    <div class="modal-footer" style="display:flex;justify-content:flex-end;gap:8px">
+      <button class="btn btn-ghost" onclick="closeModal('modal-insumo')">Cancelar</button>
+      <button class="btn btn-primary" onclick="guardarInsumoModal()">Guardar Insumo</button>
     </div>
   </div>
 </div>
@@ -1375,13 +1458,40 @@ function priceKey(s){ return String(s||"").trim().toLowerCase(); }
 // Arma la base de ingredientes: proveedor, último precio, fórmulas donde se usa
 function buildIngredientsIndex(){
   const idx = {}; // key -> {sku, nombre, inci, fase, proveedores:Set, precio, unidad, densidadMP, ts, formulas:Set}
+
+  // 1. Cargar todos los insumos almacenados en priceDB (incluyendo los creados directamente en el catálogo)
+  Object.keys(priceDB).forEach(k => {
+    const p = priceDB[k];
+    if(!p || typeof p !== "object") return;
+    const nombre = (p.nombre || k).trim();
+    if(!nombre) return;
+    const key = priceKey(nombre);
+    if(!idx[key]){
+      const provs = new Set(Array.isArray(p.proveedores) ? p.proveedores : (p.proveedor ? [p.proveedor] : []));
+      idx[key] = {
+        sku: p.sku || generateSKU(nombre, p.fase),
+        nombre: nombre,
+        inci: p.inci || "",
+        fase: p.fase || "",
+        proveedores: provs,
+        precio: (p.precio !== undefined && p.precio !== null && p.precio !== "") ? parseFloat(p.precio) : null,
+        unidad: p.unidadCosto || p.unidad || "g",
+        densidadMP: (p.densidadMP !== undefined && p.densidadMP !== null && p.densidadMP !== "") ? parseFloat(p.densidadMP) : (getPreloadedDensity(nombre, p.inci) || null),
+        ts: p.ts || 0,
+        formulas: new Set()
+      };
+    }
+  });
+
+  // 2. Escanear todas las fórmulas para registrar fórmulas donde se usan y actualizar datos
   [...formulas].sort((a,b)=>(a.ts||0)-(b.ts||0)).forEach(f=>{
     (f.ingredientes||[]).forEach(i=>{
-      const key = priceKey(i.nombre||i.inci); if(!key) return;
+      const key = priceKey(i.nombre||i.inci);
+      if(!key) return;
       if(!idx[key]){
         idx[key] = {
           sku: generateSKU(i.nombre||i.inci, i.fase),
-          nombre: i.nombre||i.inci,
+          nombre: (i.nombre||i.inci).trim(),
           inci: "",
           fase: "",
           proveedores: new Set(),
@@ -1393,35 +1503,37 @@ function buildIngredientsIndex(){
         };
       }
       const e = idx[key];
-      if(i.proveedor) e.proveedores.add(i.proveedor);
-      if((f.ts||0)>=e.ts){
+      if(i.proveedor && i.proveedor.trim()) e.proveedores.add(i.proveedor.trim());
+      if((f.ts||0) >= e.ts){
         if(i.inci) e.inci = i.inci;
         if(i.fase) e.fase = i.fase;
-        if(i.precio){ e.precio=i.precio; e.unidad=i.unidadCosto||"g"; }
-        if(i.densidadMP) e.densidadMP = parseFloat(i.densidadMP)||null;
-        e.ts=f.ts||0;
+        if(i.precio !== undefined && i.precio !== null && i.precio !== ""){
+          e.precio = parseFloat(i.precio);
+          e.unidad = i.unidadCosto || "g";
+        }
+        if(i.densidadMP !== undefined && i.densidadMP !== null && i.densidadMP !== ""){
+          e.densidadMP = parseFloat(i.densidadMP);
+        }
+        e.ts = f.ts || 0;
       }
-      e.formulas.add(f.nombre);
+      if(f.nombre) e.formulas.add(f.nombre);
     });
   });
-  // Completa precio y densidad con priceDB o catálogo precargado
+
+  // 3. Fallback de densidades si aún no estuviera fijada
   Object.keys(idx).forEach(k=>{
-    const p = priceDB[k];
-    if(p){
-      if(!idx[k].precio && p.precio){ idx[k].precio = p.precio; idx[k].unidad = p.unidadCosto||"g"; }
-      if(!idx[k].densidadMP && p.densidadMP) idx[k].densidadMP = parseFloat(p.densidadMP)||null;
-    }
     if(!idx[k].densidadMP){
       const pre = getPreloadedDensity(idx[k].nombre, idx[k].inci);
       if(pre) idx[k].densidadMP = pre;
     }
   });
+
   return idx;
 }
 
 function renderIngredientsDB(){
   const tbody = document.getElementById("ingdb-tbody"); if(!tbody) return;
-  const q = (document.getElementById("ingdb-search")?.value||"").toLowerCase();
+  const q = (document.getElementById("ingdb-search")?.value||"").toLowerCase().trim();
   const idx = buildIngredientsIndex();
   let rows = Object.entries(idx).map(([key,r])=>({key,...r}));
   if(q) rows = rows.filter(r=>
@@ -1431,23 +1543,121 @@ function renderIngredientsDB(){
     [...r.proveedores].some(p=>p.toLowerCase().includes(q))
   );
   rows.sort((a,b)=>a.nombre.localeCompare(b.nombre));
-  if(!rows.length){ tbody.innerHTML = `<tr><td colspan="9" style="padding:16px;color:var(--muted)">Sin insumos registrados.</td></tr>`; return; }
+  if(!rows.length){ tbody.innerHTML = `<tr><td colspan="9" style="padding:16px;color:var(--muted)">Sin insumos registrados. Pulsa "+ Nuevo Insumo" para registrar uno.</td></tr>`; return; }
   tbody.innerHTML = rows.map(r=>{
     const dVal = r.densidadMP ? (Number(r.densidadMP).toFixed(3)) : (getPreloadedDensity(r.nombre, r.inci)||1.000).toFixed(3);
+    const formulasStr = r.formulas.size ? [...r.formulas].join(", ") : "—";
     return `
     <tr style="border-bottom:1px solid var(--border)" data-key="${esc(r.key)}">
       <td style="padding:8px 6px"><input type="checkbox" class="ingdb-check" value="${esc(r.key)}" onchange="updateMergeBtn()"></td>
       <td style="padding:8px 6px;font-family:var(--fm);font-size:11px;color:var(--accent2)">${esc(r.sku)}</td>
-      <td style="padding:8px 6px;font-weight:500" ondblclick="renameIngredient('${esc(r.key)}')" title="Doble clic para renombrar">${esc(r.nombre)}</td>
+      <td style="padding:8px 6px;font-weight:500" ondblclick="openModalEditarInsumo('${esc(r.key)}')" title="Doble clic para editar">${esc(r.nombre)}</td>
       <td style="padding:8px 6px;font-size:11px;color:var(--muted);font-style:italic">${esc(r.inci||"—")}</td>
       <td style="padding:8px 6px;font-family:var(--fm);font-size:11px" title="Densidad en g/mL">${dVal} g/mL</td>
       <td style="padding:8px 6px;font-size:12px">${esc([...r.proveedores].join(", ")||"—")}</td>
-      <td style="padding:8px 6px;font-family:var(--fm);font-size:12px">${r.precio?fmtMoney(r.precio)+" / "+r.unidad:"—"}</td>
-      <td style="padding:8px 6px;font-size:11px;color:var(--muted)">${esc([...r.formulas].join(", "))}</td>
-      <td style="padding:8px 6px"><button class="btn btn-ghost btn-sm" onclick="deleteIngredientFromDB('${esc(r.key)}')" title="Eliminar de la base de insumos">🗑️</button></td>
+      <td style="padding:8px 6px;font-family:var(--fm);font-size:12px">${r.precio!==null&&r.precio!==undefined?fmtMoney(r.precio)+" / "+r.unidad:"—"}</td>
+      <td style="padding:8px 6px;font-size:11px;color:var(--muted)">${esc(formulasStr)}</td>
+      <td style="padding:8px 6px">
+        <div style="display:flex;gap:4px">
+          <button class="btn btn-ghost btn-sm" onclick="openModalEditarInsumo('${esc(r.key)}')" title="Editar insumo">✎</button>
+          <button class="btn btn-ghost btn-sm" onclick="deleteIngredientFromDB('${esc(r.key)}')" title="Eliminar de la base de insumos">🗑️</button>
+        </div>
+      </td>
     </tr>`;
   }).join("");
   updateMergeBtn();
+}
+
+// ── Modales de creación y edición directa de Insumos en el Catálogo ──
+function openModalNuevoInsumo(){
+  document.getElementById("modal-insumo-title").textContent = "Nuevo Insumo";
+  document.getElementById("ins-edit-key").value = "";
+  document.getElementById("ins-nombre").value = "";
+  document.getElementById("ins-inci").value = "";
+  document.getElementById("ins-fase").value = "";
+  document.getElementById("ins-densidad").value = "";
+  document.getElementById("ins-precio").value = "";
+  document.getElementById("ins-unidad").value = "g";
+  document.getElementById("ins-proveedor").value = "";
+  document.getElementById("ins-sku").value = "";
+  document.getElementById("insumo-error-msg").style.display = "none";
+  openModal("modal-insumo");
+  setTimeout(() => document.getElementById("ins-nombre")?.focus(), 100);
+}
+
+function onInsumoNombreInput(){
+  const nombre = document.getElementById("ins-nombre")?.value.trim() || "";
+  const fase = document.getElementById("ins-fase")?.value || "";
+  const densInput = document.getElementById("ins-densidad");
+  const skuInput = document.getElementById("ins-sku");
+  const editKey = document.getElementById("ins-edit-key")?.value;
+  
+  if(!editKey && skuInput && (!skuInput.dataset.manual || !skuInput.value)){
+    skuInput.value = generateSKU(nombre, fase);
+  }
+  if(densInput && !densInput.value){
+    const dPre = getPreloadedDensity(nombre, document.getElementById("ins-inci")?.value);
+    if(dPre) densInput.value = dPre;
+  }
+}
+
+function onInsumoInciBlur(){
+  const densInput = document.getElementById("ins-densidad");
+  if(densInput && !densInput.value){
+    const dPre = getPreloadedDensity(document.getElementById("ins-nombre")?.value, document.getElementById("ins-inci")?.value);
+    if(dPre) densInput.value = dPre;
+  }
+}
+
+function openModalEditarInsumo(key){
+  const idx = buildIngredientsIndex();
+  const item = idx[key];
+  if(!item) return;
+  document.getElementById("modal-insumo-title").textContent = "Editar Insumo";
+  document.getElementById("ins-edit-key").value = key;
+  document.getElementById("ins-nombre").value = item.nombre || "";
+  document.getElementById("ins-inci").value = item.inci || "";
+  document.getElementById("ins-fase").value = item.fase || "";
+  document.getElementById("ins-densidad").value = item.densidadMP || "";
+  document.getElementById("ins-precio").value = (item.precio !== null && item.precio !== undefined) ? item.precio : "";
+  document.getElementById("ins-unidad").value = item.unidad || "g";
+  document.getElementById("ins-proveedor").value = [...item.proveedores].join(", ") || "";
+  document.getElementById("ins-sku").value = item.sku || generateSKU(item.nombre, item.fase);
+  document.getElementById("insumo-error-msg").style.display = "none";
+  openModal("modal-insumo");
+}
+
+function guardarInsumoModal(){
+  const errEl = document.getElementById("insumo-error-msg");
+  if(errEl) errEl.style.display = "none";
+  
+  const editKey = document.getElementById("ins-edit-key")?.value;
+  const nombre = document.getElementById("ins-nombre")?.value.trim();
+  const inci = document.getElementById("ins-inci")?.value.trim();
+  const fase = document.getElementById("ins-fase")?.value;
+  const dens = document.getElementById("ins-densidad")?.value;
+  const precio = document.getElementById("ins-precio")?.value;
+  const unidad = document.getElementById("ins-unidad")?.value || "g";
+  const proveedor = document.getElementById("ins-proveedor")?.value.trim();
+  const sku = document.getElementById("ins-sku")?.value.trim();
+  
+  if(!nombre && !inci){
+    if(errEl){
+      errEl.textContent = "Debes ingresar al menos el Nombre Comercial o el Nombre INCI.";
+      errEl.style.display = "block";
+    }
+    return;
+  }
+  
+  if(editKey && priceKey(nombre) !== editKey){
+    applyIngredientRename_noRerender(editKey, nombre);
+  }
+  
+  rememberPrice(nombre, inci, precio, unidad, dens, proveedor, fase, sku);
+  persistPriceDB();
+  refreshAutocompleteLists();
+  closeModal("modal-insumo");
+  renderIngredientsDB();
 }
 
 function toggleAllIngdb(checked){
@@ -1514,17 +1724,25 @@ function applyIngredientRename_noRerender(oldKey, nuevoNombre){
 // Elimina un ingrediente de la base de precios (no lo borra de fórmulas ya creadas, solo deja de aparecer como "en existencia")
 async function deleteIngredientFromDB(key){
   const idx = buildIngredientsIndex();
-  const nombre = idx[key]?.nombre || key;
-  const enUso = idx[key]?.formulas?.size || 0;
+  const item = idx[key];
+  const nombre = item?.nombre || key;
+  const enUso = item?.formulas?.size || 0;
   const msg = enUso>0
-    ? `"${nombre}" se usa en ${enUso} fórmula(s). Se eliminará de la base de precios/proveedor (deja de estar "en existencia"), pero seguirá apareciendo en esas fórmulas ya guardadas. ¿Continuar?`
-    : `¿Eliminar "${nombre}" de la base de ingredientes?`;
+    ? `"${nombre}" se usa en ${enUso} fórmula(s). Se eliminará del Catálogo de Insumos (deja de estar "en existencia"), pero seguirá apareciendo en esas fórmulas ya guardadas. ¿Continuar?`
+    : `¿Eliminar "${nombre}" del Catálogo de Insumos?`;
   if(!confirm(msg)) return;
   delete priceDB[key];
-  persistPriceDB(); renderIngredientsDB();
+  if(item){
+    if(item.nombre) delete priceDB[priceKey(item.nombre)];
+    if(item.inci) delete priceDB[priceKey(item.inci)];
+  }
+  persistPriceDB();
+  refreshAutocompleteLists();
+  renderIngredientsDB();
   if(window.__forceFirestoreSyncNow) await window.__forceFirestoreSyncNow();
 }
 
+// Refresca los <datalist> de autocompletado con lo almacenado en fórmulas Y en priceDB
 // Exporta tabla de insumos lista para ERP / Excel en CSV estándar
 function exportIngredientsCSV(){
   const idx = buildIngredientsIndex();
@@ -1540,7 +1758,7 @@ function exportIngredientsCSV(){
       esc2(r.inci||""),
       esc2(dVal),
       esc2([...r.proveedores].join("; ")),
-      esc2(r.precio||""),
+      esc2(r.precio!==null&&r.precio!==undefined?r.precio:""),
       esc2(r.unidad||"g"),
       esc2([...r.formulas].join("; "))
     ].join(","));
@@ -1561,7 +1779,7 @@ function exportIngredientsJsonForERP(){
     phase_default: r.fase || "",
     density_g_ml: r.densidadMP ? Number(r.densidadMP) : (getPreloadedDensity(r.nombre, r.inci) || 1.0),
     suppliers: [...r.proveedores],
-    last_unit_cost: r.precio ? Number(r.precio) : null,
+    last_unit_cost: (r.precio!==null&&r.precio!==undefined) ? Number(r.precio) : null,
     cost_unit: r.unidad || "g",
     currency: "COP",
     used_in_formulas: [...r.formulas],
@@ -1613,7 +1831,7 @@ function exportFormulaBOM(id){
         quantity_per_batch_ml: Math.round((batchGrams / dens) * 1000) / 1000,
         density_g_ml: dens,
         supplier: i.proveedor || [...(ref.proveedores||[])].join(", ") || "",
-        unit_cost: i.precio ? parseFloat(i.precio) : (ref.precio ? parseFloat(ref.precio) : 0),
+        unit_cost: (i.precio!==null&&i.precio!==undefined&&i.precio!=="") ? parseFloat(i.precio) : (ref.precio ? parseFloat(ref.precio) : 0),
         cost_unit: i.unidadCosto || ref.unidad || "g"
       };
     }),
@@ -1705,7 +1923,7 @@ async function sendIngredientsDirectToERP(){
     inci_name: r.inci || "",
     density_g_ml: r.densidadMP ? Number(r.densidadMP) : (getPreloadedDensity(r.nombre, r.inci) || 1.0),
     suppliers: [...r.proveedores],
-    last_unit_cost: r.precio ? Number(r.precio) : null,
+    last_unit_cost: (r.precio!==null&&r.precio!==undefined) ? Number(r.precio) : null,
     cost_unit: r.unidad || "g"
   }));
   try{
@@ -1727,20 +1945,23 @@ async function sendIngredientsDirectToERP(){
   }
 }
 
-// Refresca los <datalist> de autocompletado con lo ya almacenado
 function refreshAutocompleteLists(){
   const nombres = new Set(), proveedores = new Set();
   formulas.forEach(f=>(f.ingredientes||[]).forEach(i=>{
-    if(i.nombre) nombres.add(i.nombre);
-    if(i.proveedor) proveedores.add(i.proveedor);
+    if(i.nombre && i.nombre.trim()) nombres.add(i.nombre.trim());
+    if(i.proveedor && i.proveedor.trim()) proveedores.add(i.proveedor.trim());
   }));
+  Object.values(priceDB).forEach(p=>{
+    if(p && p.nombre && p.nombre.trim()) nombres.add(p.nombre.trim());
+    if(p && p.proveedor && p.proveedor.trim()) proveedores.add(p.proveedor.trim());
+    if(p && Array.isArray(p.proveedores)) p.proveedores.forEach(pr => { if(pr && pr.trim()) proveedores.add(pr.trim()); });
+  });
   const dlN = document.getElementById("dl-ing-nombres");
   const dlP = document.getElementById("dl-proveedores");
-  if(dlN) dlN.innerHTML = [...nombres].map(n=>`<option value="${esc(n)}">`).join("");
-  if(dlP) dlP.innerHTML = [...proveedores].map(p=>`<option value="${esc(p)}">`).join("");
+  if(dlN) dlN.innerHTML = [...nombres].sort((a,b)=>a.localeCompare(b)).map(n=>`<option value="${esc(n)}">`).join("");
+  if(dlP) dlP.innerHTML = [...proveedores].sort((a,b)=>a.localeCompare(b)).map(p=>`<option value="${esc(p)}">`).join("");
 }
 
-// Abre una vista en una pestaña nueva del navegador (no interrumpe lo que se está editando)
 function openViewNewTab(viewName){
   const base = location.href.split("#")[0];
   window.open(base + "#" + viewName, "_blank");
@@ -1845,19 +2066,43 @@ Responde en español, corto y directo (máx. 4-5 líneas salvo que pidan más de
 
 
 // Registra/actualiza el precio y densidad de un ingrediente en la base global
-function rememberPrice(nombre, inci, precio, unidadCosto, densidadMP){
-  if(!precio && !densidadMP) return;
+function rememberPrice(nombre, inci, precio, unidadCosto, densidadMP, proveedor, fase, customSKU){
+  const cleanNombre = (nombre || "").trim();
+  const cleanInci = (inci || "").trim();
+  if(!cleanNombre && !cleanInci) return;
+
+  const kNombre = priceKey(cleanNombre);
+  const kInci = priceKey(cleanInci);
+  const primaryKey = kNombre || kInci;
+  
+  const existing = priceDB[primaryKey] || (kInci ? priceDB[kInci] : null) || {};
+  
+  const dVal = (densidadMP !== undefined && densidadMP !== null && densidadMP !== "" && !isNaN(parseFloat(densidadMP)))
+    ? parseFloat(densidadMP)
+    : (existing.densidadMP ? parseFloat(existing.densidadMP) : (getPreloadedDensity(cleanNombre, cleanInci) || null));
+    
+  const provSet = new Set(Array.isArray(existing.proveedores) ? existing.proveedores : (existing.proveedor ? [existing.proveedor] : []));
+  if(proveedor && proveedor.trim()) provSet.add(proveedor.trim());
+
   const entry = {
-    precio: precio || null,
-    unidadCosto: unidadCosto || "g",
-    densidadMP: densidadMP || null
+    sku: customSKU || existing.sku || generateSKU(cleanNombre || cleanInci, fase || existing.fase),
+    nombre: cleanNombre || existing.nombre || cleanInci,
+    inci: cleanInci || existing.inci || "",
+    fase: (fase && fase.trim()) || existing.fase || "",
+    proveedores: [...provSet],
+    proveedor: (proveedor && proveedor.trim()) || existing.proveedor || [...provSet][0] || "",
+    precio: (precio !== undefined && precio !== null && precio !== "" && !isNaN(parseFloat(precio))) ? parseFloat(precio) : (existing.precio !== undefined ? existing.precio : null),
+    unidadCosto: unidadCosto || existing.unidadCosto || "g",
+    densidadMP: dVal,
+    ts: Date.now()
   };
-  const kNombre = priceKey(nombre), kInci = priceKey(inci);
-  if(kNombre) priceDB[kNombre] = Object.assign({}, priceDB[kNombre] || {}, entry);
-  if(kInci && kInci!==kNombre) priceDB[kInci] = Object.assign({}, priceDB[kInci] || {}, entry);
+
+  if(kNombre) priceDB[kNombre] = Object.assign({}, existing, entry);
+  if(kInci && kInci !== kNombre) priceDB[kInci] = Object.assign({}, priceDB[kInci] || {}, entry);
+  
   persistPriceDB();
 }
-// Busca un precio conocido por nombre o INCI
+
 function lookupPrice(nombre, inci){
   return priceDB[priceKey(nombre)] || priceDB[priceKey(inci)] || null;
 }
@@ -2232,8 +2477,10 @@ function openEditor(id){
 function cancelEdit(){ clearTimeout(autosaveTimer); editingId=null; showView("home"); }
 
 function editFormula(id){
-  showView("editor"); openEditor(id); editingId=id;
-  document.getElementById("editor-title").textContent="Editar fórmula";
+  editingId = id;
+  showView("editor");
+  openEditor(id);
+  document.getElementById("editor-title").textContent = "Editar fórmula";
 }
 
 function addIngRow(data){
@@ -2241,22 +2488,25 @@ function addIngRow(data){
   const initialDens = data?.densidadMP || (data?.nombre || data?.inci ? getPreloadedDensity(data?.nombre, data?.inci) : '') || '';
   tr.innerHTML=`
     <td><input class="input" list="dl-ing-nombres" placeholder="Nombre Comercial" value="${esc(data?.nombre||'')}" oninput="updatePct(); debounceAutofill(this.closest('tr'))" onblur="autofillPrice(this.closest('tr'))"></td>
-    <td><input class="input" placeholder="INCI" value="${esc(data?.inci||'')}" onblur="autofillPrice(this.closest('tr'))"></td>
-    <td><input class="input" list="dl-proveedores" placeholder="Proveedor" value="${esc(data?.proveedor||'')}"></td>
-    <td><select class="input">${PHASES.map(p=>`<option value="${p}"${(data?.fase||'')==p?" selected":""}>${p||"—"}</option>`).join("")}</select></td>
+    <td><input class="input" placeholder="INCI" value="${esc(data?.inci||'')}" oninput="updatePct()" onblur="autofillPrice(this.closest('tr'))"></td>
+    <td><input class="input" list="dl-proveedores" placeholder="Proveedor" value="${esc(data?.proveedor||'')}" onblur="autofillPrice(this.closest('tr'))"></td>
+    <td><select class="input" onchange="autofillPrice(this.closest('tr'))">${PHASES.map(p=>`<option value="${p}"${(data?.fase||'')==p?" selected":""}>${p||"—"}</option>`).join("")}</select></td>
     <td><input class="input" type="number" placeholder="%" min="0" max="100" step="0.01" value="${data?.porcentaje||''}" oninput="updatePct()"></td>
-    <td><input class="input" type="number" placeholder="0" min="0" step="any" value="${data?.precio||''}" oninput="updateCosts()" style="font-family:var(--fm);width:100%"></td>
-    <td><select class="input" onchange="updateCosts()" style="font-size:11px;padding:6px 4px">
+    <td><input class="input" type="number" placeholder="0" min="0" step="any" value="${data?.precio||''}" oninput="updateCosts()" onblur="autofillPrice(this.closest('tr'))" style="font-family:var(--fm);width:100%"></td>
+    <td><select class="input" onchange="updateCosts(); autofillPrice(this.closest('tr'))" style="font-size:11px;padding:6px 4px">
       <option value="g"  ${(data?.unidadCosto||'g')==='g' ?'selected':''}>/ g</option>
       <option value="mg" ${(data?.unidadCosto||'g')==='mg'?'selected':''}>/ mg</option>
       <option value="mL" ${(data?.unidadCosto||'g')==='mL'?'selected':''}>/ mL</option>
       <option value="uL" ${(data?.unidadCosto||'g')==='uL'?'selected':''}>/ uL</option>
     </select></td>
-    <td><input class="input td-densidad-mp" type="number" placeholder="1.0" min="0.1" step="0.001" value="${initialDens}" oninput="updateCosts()" style="font-family:var(--fm);width:100%;font-size:11px" title="Densidad específica del insumo (g/mL). Solo requerida si el costo o uso es en mL/L"></td>
+    <td><input class="input td-densidad-mp" type="number" placeholder="1.0" min="0.1" step="0.001" value="${initialDens}" oninput="updateCosts()" onblur="autofillPrice(this.closest('tr'))" style="font-family:var(--fm);width:100%;font-size:11px" title="Densidad específica del insumo (g/mL). Solo requerida si el costo o uso es en mL/L"></td>
     <td style="text-align:right;font-family:var(--fm);font-size:12px;color:var(--muted);white-space:nowrap" class="td-ing-cost">—</td>
     <td class="td-rm"><button class="btn-dsf" onclick="removeIngRow(this)">✕</button></td>`;
   document.getElementById("ing-tbody").appendChild(tr);
   updateCosts();
+  if(data?.nombre || data?.inci){
+    rememberPrice(data.nombre, data.inci, data.precio, data.unidadCosto, data.densidadMP, data.proveedor, data.fase);
+  }
 }
 
 let __autofillTimer = null;
@@ -2264,23 +2514,27 @@ function debounceAutofill(tr){
   clearTimeout(__autofillTimer);
   __autofillTimer = setTimeout(()=>autofillPrice(tr), 400);
 }
+
 function autofillPrice(tr){
   if(!tr) return;
   const inputs = tr.querySelectorAll("input");
   const sels   = tr.querySelectorAll("select");
   const nombre = inputs[0]?.value.trim();
   const inciInput   = inputs[1];
-  const precioInput = inputs[4];
-  const densInput   = inputs[5];
+  const provInput   = inputs[2];
   const faseSel     = sels[0];
+  const precioInput = inputs[4];
   const unidadSel   = sels[1];
-  if(!nombre) return;
+  const densInput   = inputs[5];
+  if(!nombre && !inciInput?.value.trim()) return;
+
   const idx = buildIngredientsIndex();
-  const found = idx[priceKey(nombre)];
+  const found = idx[priceKey(nombre || inciInput?.value)];
   if(found){
     if(inciInput && !inciInput.value && found.inci) inciInput.value = found.inci;
+    if(provInput && !provInput.value && found.proveedor) provInput.value = found.proveedor;
     if(faseSel && !faseSel.value && found.fase) faseSel.value = found.fase;
-    if(precioInput && !precioInput.value && found.precio){
+    if(precioInput && !precioInput.value && found.precio !== null && found.precio !== undefined){
       precioInput.value = found.precio;
       if(unidadSel) unidadSel.value = found.unidad||"g";
     }
@@ -2292,6 +2546,16 @@ function autofillPrice(tr){
     const pre = getPreloadedDensity(nombre, inciInput?.value);
     if(pre) densInput.value = pre;
   }
+  // Registrar de una vez en el Catálogo de Insumos si es nuevo o trae datos
+  rememberPrice(
+    nombre,
+    inciInput?.value,
+    precioInput?.value,
+    unidadSel?.value || "g",
+    densInput?.value,
+    provInput?.value,
+    faseSel?.value
+  );
   updateCosts();
 }
 
@@ -2488,13 +2752,12 @@ function computeCostSnapshot(){
   const otherTotal = getOtherCosts().reduce((s,o)=>s+o.valor,0);
   if(otherTotal>0) hasAnyCost=true;
   if(!hasAnyCost) return {costoPer100:null,pvpPer100:null,presentaciones:[],otrosCostos:[]};
-  // El overhead/mermas aplica solo sobre el costo de materia prima (MP)
   const costoMPconOH = totalCostoMP*(1+overhead);
   const costoConOH = Math.round(costoMPconOH + otherTotal);
   const costo100 = Math.round((costoConOH/loteRef)*100);
   const pvp100 = Math.round(costo100/(1-margen));
   const pres=getPresentations();
-  const toGrams={g:1,oz:28.35,kg:1000,mL:densidad,L:1000*densidad};
+  const toGrams={g:1,oz:28.35,kg:1000,mL:fDensidad,L:1000*fDensidad};
   const costoPorG=costoConOH/loteRef;
   const presentaciones=pres.map(p=>({
     nombre:p.nombre,cantidad:p.cantidad,unidad:p.unidad,
@@ -2509,7 +2772,7 @@ function computeCostSnapshot(){
 // SAVE FORMULA
 // ═══════════════════════════════════════════════
 function duplicateFormula(id){
-  const src = formulas.find(f=>f.id===id);
+  const src = formulas.find(f=>String(f.id)===String(id));
   if(!src) return;
   const copy = JSON.parse(JSON.stringify(src));
   copy.id = uid();
@@ -2533,43 +2796,69 @@ function buildFormulaFromEditor(existing, opts){
   const versionNote=opts.bumpVersion?document.getElementById("f-version-note").value.trim():"";
   const newVersion=document.getElementById("f-version").value.trim();
   const history=[...(existing?.versionHistory||[])];
-  if(opts.bumpVersion && existing && (versionNote||newVersion)){
-    history.push({version:existing.version||"v?",ts:existing.ts,note:versionNote||"Sin descripción",ingredientes:[...existing.ingredientes]});
+  if(opts.bumpVersion && existing && (versionNote || (newVersion && newVersion !== existing.version))){
+    history.push({
+      version: existing.version || "v?",
+      ts: existing.tsUpdated || existing.ts || Date.now(),
+      note: versionNote || "Sin descripción",
+      ingredientes: existing.ingredientes ? JSON.parse(JSON.stringify(existing.ingredientes)) : []
+    });
   }
   const {costoPer100,pvpPer100}=computeCostSnapshot();
   return {
-    id:editingId||uid(), nombre,
-    categoriaId:document.getElementById("f-categoria").value,
-    status:document.getElementById("f-status").value,
-    version:newVersion,
-    descripcion:document.getElementById("f-descripcion").value.trim(),
-    ph:document.getElementById("f-ph").value.trim(),
-    notas:document.getElementById("f-notas").value.trim(),
-    loteRef:parseFloat(document.getElementById("f-lote-ref").value)||1000,
-    overhead:parseFloat(document.getElementById("f-overhead").value)||15,
-    densidad:parseFloat(document.getElementById("f-densidad").value)||1,
-    margen:parseFloat(document.getElementById("f-margen").value)||40,
+    id: (existing && existing.id) ? existing.id : (editingId || uid()),
+    nombre,
+    categoriaId: document.getElementById("f-categoria").value,
+    status: document.getElementById("f-status").value,
+    version: newVersion,
+    descripcion: document.getElementById("f-descripcion").value.trim(),
+    ph: document.getElementById("f-ph").value.trim(),
+    notas: document.getElementById("f-notas").value.trim(),
+    loteRef: parseFloat(document.getElementById("f-lote-ref").value)||1000,
+    overhead: parseFloat(document.getElementById("f-overhead").value)||15,
+    densidad: parseFloat(document.getElementById("f-densidad").value)||1,
+    margen: parseFloat(document.getElementById("f-margen").value)||40,
     costoPer100, pvpPer100,
-    ingredientes:getIngredientes().sort((a,b)=>(parseFloat(b.porcentaje)||0)-(parseFloat(a.porcentaje)||0)),
-    procedimiento:getProcSteps(),
-    otrosCostos:getOtherCosts(),
-    presentaciones:getPresentations(),
-    versionHistory:history,
-    ts:editingId?(existing?.ts||Date.now()):Date.now(),
-    tsUpdated:Date.now()
+    ingredientes: getIngredientes().sort((a,b)=>(parseFloat(b.porcentaje)||0)-(parseFloat(a.porcentaje)||0)),
+    procedimiento: getProcSteps(),
+    otrosCostos: getOtherCosts(),
+    presentaciones: getPresentations(),
+    versionHistory: history,
+    ts: (existing && existing.ts) ? existing.ts : Date.now(),
+    tsUpdated: Date.now()
   };
 }
 
 function saveFormula(){
-  const nombre=document.getElementById("f-nombre").value.trim(); if(!nombre) return;
-  const existing=editingId?formulas.find(x=>x.id===editingId):null;
-  const f=buildFormulaFromEditor(existing,{bumpVersion:true});
-  if(editingId) formulas=formulas.map(x=>x.id===editingId?f:x);
-  else formulas.unshift(f);
-  (f.ingredientes||[]).forEach(i=>{
-    if(i.precio || i.densidadMP) rememberPrice(i.nombre, i.inci, i.precio, i.unidadCosto, i.densidadMP);
+  clearTimeout(autosaveTimer);
+  const nombreInput = document.getElementById("f-nombre");
+  const nombre = nombreInput ? nombreInput.value.trim() : "";
+  if(!nombre){
+    alert("Por favor asigna un nombre a la fórmula antes de guardar.");
+    if(nombreInput) nombreInput.focus();
+    return;
+  }
+  const targetId = editingId;
+  const existingIndex = targetId ? formulas.findIndex(x => String(x.id) === String(targetId)) : -1;
+  const existing = existingIndex >= 0 ? formulas[existingIndex] : null;
+  const f = buildFormulaFromEditor(existing, {bumpVersion: true});
+  
+  if(existingIndex >= 0){
+    formulas[existingIndex] = f;
+  } else {
+    formulas.unshift(f);
+  }
+  
+  // Registrar de forma garantizada todos los insumos en el Catálogo de Insumos
+  (f.ingredientes || []).forEach(i => {
+    if(i.nombre || i.inci){
+      rememberPrice(i.nombre, i.inci, i.precio, i.unidadCosto, i.densidadMP, i.proveedor, i.fase);
+    }
   });
-  persist(); editingId=null; showView("home");
+  
+  persist();
+  editingId = null;
+  showView("home");
 }
 
 // ═══════════════════════════════════════════════
@@ -2583,17 +2872,24 @@ function scheduleAutosave(){
   if(ind) ind.textContent="Editando…";
   autosaveTimer=setTimeout(autosaveFormula, 1500);
 }
+
 function autosaveFormula(){
-  if(document.getElementById("view-editor")?.classList.contains("active")!==true) return; // ya no estamos en el editor
+  if(document.getElementById("view-editor")?.classList.contains("active")!==true) return;
   const nombre=document.getElementById("f-nombre")?.value.trim();
   const ind=document.getElementById("autosave-indicator");
-  if(!nombre){ if(ind) ind.textContent=""; return; } // esperar a que tenga nombre antes de crear el registro
-  const existing=editingId?formulas.find(x=>x.id===editingId):null;
-  const f=buildFormulaFromEditor(existing,{bumpVersion:false});
-  if(editingId) formulas=formulas.map(x=>x.id===editingId?f:x);
-  else { formulas.unshift(f); editingId=f.id; }
+  if(!nombre){ if(ind) ind.textContent=""; return; }
+  const targetId = editingId;
+  const existingIndex = targetId ? formulas.findIndex(x => String(x.id) === String(targetId)) : -1;
+  const existing = existingIndex >= 0 ? formulas[existingIndex] : null;
+  const f = buildFormulaFromEditor(existing, {bumpVersion: false});
+  if(existingIndex >= 0){
+    formulas[existingIndex] = f;
+  } else {
+    formulas.unshift(f);
+    editingId = f.id;
+  }
   (f.ingredientes||[]).forEach(i=>{
-    if(i.precio) rememberPrice(i.nombre, i.inci, i.precio, i.unidadCosto);
+    if(i.nombre || i.inci) rememberPrice(i.nombre, i.inci, i.precio, i.unidadCosto, i.densidadMP, i.proveedor, i.fase);
   });
   persist();
   if(ind){
@@ -2602,9 +2898,6 @@ function autosaveFormula(){
   }
 }
 
-// ═══════════════════════════════════════════════
-// PROCEDURE EDITOR
-// ═══════════════════════════════════════════════
 function loadProcSteps(steps, containerId){
   const cid=containerId||"proc-steps-editor";
   const container=document.getElementById(cid);
