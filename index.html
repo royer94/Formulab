@@ -853,9 +853,29 @@ select.input{cursor:pointer;appearance:none;
       <button class="btn btn-accent btn-sm" onclick="sendIngredientsDirectToERP()">📡 Enviar a API ERP</button>
     </div>
   </div>
+  <!-- BANNER DE ALERTAS DE COMPRA Y REPOSICIÓN DE INSUMOS -->
+  <div id="ingdb-alert-banner" style="display:none;background:var(--surface2);border:1px solid var(--warn);border-left:4px solid var(--warn);border-radius:8px;padding:12px 16px;margin-bottom:16px">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+      <div>
+        <strong style="color:var(--warn)">🔔 Alertas de Compra & Reposición de Materias Primas</strong>
+        <div id="ingdb-alert-text" style="font-size:12px;color:var(--muted);margin-top:2px"></div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-secondary btn-sm" onclick="toggleFiltroInsumosBajos()" id="btn-toggle-filtro-bajos">Ver Insumos por Reponer</button>
+        <button class="btn btn-erp btn-sm" onclick="exportShoppingListCSV()">↓ Descargar Lista de Compras (CSV)</button>
+      </div>
+    </div>
+  </div>
+
   <div class="toolbar" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
-    <div style="display:flex;gap:8px;align-items:center;flex:1;max-width:420px">
-      <input class="input" id="ingdb-search" placeholder="Buscar por SKU, nombre, INCI o proveedor…" oninput="renderIngredientsDB()" style="width:100%">
+    <div style="display:flex;gap:8px;align-items:center;flex:1;max-width:520px;flex-wrap:wrap">
+      <input class="input" id="ingdb-search" placeholder="Buscar por SKU, nombre, INCI o proveedor…" oninput="renderIngredientsDB()" style="flex:1;min-width:180px">
+      <select class="input" id="ingdb-filter-stock" onchange="renderIngredientsDB()" style="width:auto;font-size:12px">
+        <option value="all">Todos los insumos</option>
+        <option value="low">⚠️ Stock Bajo / Por Reponer</option>
+        <option value="out">🚨 Agotados (Stock 0)</option>
+        <option value="ok">✓ Stock Suficiente</option>
+      </select>
     </div>
     <div style="display:flex;gap:8px;align-items:center">
       <button class="btn btn-primary btn-sm" onclick="openModalNuevoInsumo()">+ Nuevo Insumo</button>
@@ -870,11 +890,14 @@ select.input{cursor:pointer;appearance:none;
           <th style="padding:8px 6px">SKU ERP</th>
           <th style="padding:8px 6px">Materia Prima</th>
           <th style="padding:8px 6px">INCI</th>
-          <th style="padding:8px 6px">Densidad (g/mL)</th>
+          <th style="padding:8px 6px">Densidad</th>
           <th style="padding:8px 6px">Proveedor</th>
           <th style="padding:8px 6px">Último Costo</th>
+          <th style="padding:8px 6px;text-align:right">Stock Almacén</th>
+          <th style="padding:8px 6px;text-align:right">Stock Mín.</th>
+          <th style="padding:8px 6px;text-align:center">Estado</th>
           <th style="padding:8px 6px">Fórmulas</th>
-          <th style="padding:8px 6px"></th>
+          <th style="padding:8px 6px;text-align:center">Acciones</th>
         </tr>
       </thead>
       <tbody id="ingdb-tbody"></tbody>
@@ -1131,6 +1154,27 @@ select.input{cursor:pointer;appearance:none;
         </div>
       </div>
 
+      <!-- INVENTARIO EN ALMACÉN -->
+      <div class="g3" style="margin-top:10px;background:var(--surface2);padding:10px;border-radius:8px">
+        <div>
+          <label class="fl">Stock en Existencia</label>
+          <input class="input" type="number" id="ins-stock" placeholder="0" step="any" min="0" style="font-family:var(--fm)">
+        </div>
+        <div>
+          <label class="fl">Stock Mínimo (Alerta)</label>
+          <input class="input" type="number" id="ins-stock-min" placeholder="0" step="any" min="0" style="font-family:var(--fm)">
+        </div>
+        <div>
+          <label class="fl">Unidad de Stock</label>
+          <select class="input" id="ins-unidad-stock">
+            <option value="g">g (gramos)</option>
+            <option value="kg">kg (kilogramos)</option>
+            <option value="mL">mL (mililitros)</option>
+            <option value="L">L (litros)</option>
+          </select>
+        </div>
+      </div>
+
       <div style="margin-top:10px">
         <label class="fl">Proveedor Habitual</label>
         <input class="input" id="ins-proveedor" list="dl-proveedores" placeholder="ej: Químicos del Valle SAS">
@@ -1150,6 +1194,68 @@ select.input{cursor:pointer;appearance:none;
   </div>
 </div>
 
+<!-- MODAL: REGISTRAR ENTRADA / AJUSTE DE STOCK DE INSUMO -->
+<div class="modal-backdrop" id="modal-stock-insumo">
+  <div class="modal-box" style="max-width:450px">
+    <div class="modal-header">
+      <div>
+        <span class="modal-title">± Entrada / Ajuste de Stock</span>
+        <div id="stock-adjust-subtitle" style="font-size:12px;color:var(--muted);margin-top:2px"></div>
+      </div>
+      <button class="modal-close" onclick="closeModal('modal-stock-insumo')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="stock-adjust-key" value="">
+      
+      <div style="background:var(--surface2);padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:13px;display:flex;justify-content:space-between">
+        <span>Stock Actual Registrado:</span>
+        <strong id="stock-adjust-current" style="color:var(--accent);font-family:var(--fm)">0 g</strong>
+      </div>
+
+      <div>
+        <label class="fl">Tipo de Movimiento</label>
+        <select class="input" id="stock-adjust-type" onchange="updateStockAdjustUI()">
+          <option value="entrada">➕ Entrada de Compra (Sumar a existencias)</option>
+          <option value="ajuste">🔄 Conteo Físico / Ajuste (Fijar nuevo valor exacto)</option>
+          <option value="salida">➖ Salida / Merma / Desecho (Restar de existencias)</option>
+        </select>
+      </div>
+
+      <div class="g2" style="margin-top:10px">
+        <div>
+          <label class="fl" id="stock-adjust-qty-label">Cantidad a Ingresar</label>
+          <input class="input" type="number" id="stock-adjust-qty" min="0" step="any" placeholder="0" style="font-family:var(--fm)">
+        </div>
+        <div>
+          <label class="fl">Unidad de Medida</label>
+          <select class="input" id="stock-adjust-unit">
+            <option value="g">g (gramos)</option>
+            <option value="kg">kg (kilogramos)</option>
+            <option value="mL">mL (mililitros)</option>
+            <option value="L">L (litros)</option>
+          </select>
+        </div>
+      </div>
+
+      <div style="margin-top:10px">
+        <label class="fl">Nuevo Costo Unitario de Compra (Opcional)</label>
+        <input class="input" type="number" id="stock-adjust-price" step="any" min="0" placeholder="Dejar en blanco para conservar costo actual" style="font-family:var(--fm)">
+      </div>
+
+      <div style="margin-top:10px">
+        <label class="fl">N° de Lote / Factura del Proveedor</label>
+        <input class="input" id="stock-adjust-note" placeholder="ej: Lote PROV-8942 / Factura F-1049">
+      </div>
+      
+      <div id="stock-adjust-err" style="color:var(--danger);font-size:12px;margin-top:8px;display:none"></div>
+    </div>
+    <div class="modal-footer" style="display:flex;justify-content:flex-end;gap:8px">
+      <button class="btn btn-ghost" onclick="closeModal('modal-stock-insumo')">Cancelar</button>
+      <button class="btn btn-primary" onclick="guardarAjusteStockModal()">Registrar Movimiento</button>
+    </div>
+  </div>
+</div>
+
 <!-- MODAL: LOTE -->
 <div class="modal-backdrop" id="modal-lote">
   <div class="modal-box" style="max-width:820px">
@@ -1158,12 +1264,14 @@ select.input{cursor:pointer;appearance:none;
         <span class="modal-title" id="lote-title">Hoja de Fabricación de Lote (BMR)</span>
         <div style="font-size:11px;color:var(--muted);margin-top:2px">Documento oficial de producción y control de calidad</div>
       </div>
-      <div style="display:flex;gap:8px;align-items:center">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <button class="btn btn-primary btn-sm" id="btn-print-lote" onclick="printLote()">🖨️ Generar Batch Record (PDF)</button>
+        <button class="btn btn-erp btn-sm" id="btn-descontar-lote" onclick="descontarStockLote()">📦 Descontar Insumos del Stock</button>
         <button class="modal-close" onclick="closeModal('modal-lote')">✕</button>
       </div>
     </div>
     <div class="modal-body">
+      <div id="lote-inventory-banner" style="margin-bottom:12px"></div>
       <div class="lote-size-row" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;background:var(--surface2);padding:12px;border-radius:8px">
         <div>
           <label class="fl">Tamaño del Lote (g)</label>
@@ -1375,6 +1483,37 @@ function generateSKU(nombre, fase){
   return prefix + "-" + tag + "-" + code;
 }
 
+// ─── CONVERSIÓN DE UNIDADES PARA INVENTARIO Y FORMULACIÓN ───
+function toGramos(cant, unidad, dens){
+  const c = parseFloat(cant) || 0;
+  const d = (dens > 0) ? dens : 1.0;
+  const u = String(unidad || 'g').trim().toLowerCase();
+  switch(u){
+    case 'kg': return c * 1000;
+    case 'g':  return c;
+    case 'mg': return c / 1000;
+    case 'l':  return c * 1000 * d;
+    case 'ml': return c * d;
+    case 'ul': return (c * d) / 1000;
+    default:   return c;
+  }
+}
+
+function fromGramos(gramos, unidad, dens){
+  const g = parseFloat(gramos) || 0;
+  const d = (dens > 0) ? dens : 1.0;
+  const u = String(unidad || 'g').trim().toLowerCase();
+  switch(u){
+    case 'kg': return g / 1000;
+    case 'g':  return g;
+    case 'mg': return g * 1000;
+    case 'l':  return (g / d) / 1000;
+    case 'ml': return g / d;
+    case 'ul': return (g * 1000) / d;
+    default:   return g;
+  }
+}
+
 const SYS = {
   inci:`Eres un experto en formulación cosmética con dominio del INCI.
 Dado un ingrediente devuelve ÚNICAMENTE un objeto JSON con estas claves exactas:
@@ -1457,7 +1596,7 @@ function persistPriceDB(){
 function priceKey(s){ return String(s||"").trim().toLowerCase(); }
 // Arma la base de ingredientes: proveedor, último precio, fórmulas donde se usa
 function buildIngredientsIndex(){
-  const idx = {}; // key -> {sku, nombre, inci, fase, proveedores:Set, precio, unidad, densidadMP, ts, formulas:Set}
+  const idx = {}; // key -> {sku, nombre, inci, fase, proveedores:Set, precio, unidad, densidadMP, stock, stockMin, unidadStock, ts, formulas:Set}
 
   // 1. Cargar todos los insumos almacenados en priceDB (incluyendo los creados directamente en el catálogo)
   Object.keys(priceDB).forEach(k => {
@@ -1466,6 +1605,7 @@ function buildIngredientsIndex(){
     const nombre = (p.nombre || k).trim();
     if(!nombre) return;
     const key = priceKey(nombre);
+    if(k !== key && priceDB[key]) return; // Evitar que alias INCI desactualizado sobreescriba el canónico
     if(!idx[key]){
       const provs = new Set(Array.isArray(p.proveedores) ? p.proveedores : (p.proveedor ? [p.proveedor] : []));
       idx[key] = {
@@ -1477,9 +1617,16 @@ function buildIngredientsIndex(){
         precio: (p.precio !== undefined && p.precio !== null && p.precio !== "") ? parseFloat(p.precio) : null,
         unidad: p.unidadCosto || p.unidad || "g",
         densidadMP: (p.densidadMP !== undefined && p.densidadMP !== null && p.densidadMP !== "") ? parseFloat(p.densidadMP) : (getPreloadedDensity(nombre, p.inci) || null),
+        stock: (p.stock !== undefined && p.stock !== null && p.stock !== "") ? parseFloat(p.stock) : 0,
+        stockMin: (p.stockMin !== undefined && p.stockMin !== null && p.stockMin !== "") ? parseFloat(p.stockMin) : 0,
+        unidadStock: p.unidadStock || p.unidadCosto || "g",
         ts: p.ts || 0,
         formulas: new Set()
       };
+    } else {
+      if(p.stock !== undefined && p.stock !== null && p.stock !== "") idx[key].stock = parseFloat(p.stock);
+      if(p.stockMin !== undefined && p.stockMin !== null && p.stockMin !== "") idx[key].stockMin = parseFloat(p.stockMin);
+      if(p.unidadStock) idx[key].unidadStock = p.unidadStock;
     }
   });
 
@@ -1498,6 +1645,9 @@ function buildIngredientsIndex(){
           precio: null,
           unidad: "g",
           densidadMP: null,
+          stock: 0,
+          stockMin: 0,
+          unidadStock: i.unidadCosto || "g",
           ts: 0,
           formulas: new Set()
         };
@@ -1534,31 +1684,100 @@ function buildIngredientsIndex(){
 function renderIngredientsDB(){
   const tbody = document.getElementById("ingdb-tbody"); if(!tbody) return;
   const q = (document.getElementById("ingdb-search")?.value||"").toLowerCase().trim();
+  const filtroStock = document.getElementById("ingdb-filter-stock")?.value || "all";
   const idx = buildIngredientsIndex();
   let rows = Object.entries(idx).map(([key,r])=>({key,...r}));
-  if(q) rows = rows.filter(r=>
-    (r.sku&&r.sku.toLowerCase().includes(q)) ||
-    r.nombre.toLowerCase().includes(q) ||
-    (r.inci&&r.inci.toLowerCase().includes(q)) ||
-    [...r.proveedores].some(p=>p.toLowerCase().includes(q))
-  );
+
+  // Estadísticas para banner de alertas de compras
+  let totalBajos = 0;
+  let totalAgotados = 0;
+  rows.forEach(r => {
+    const stG = toGramos(r.stock, r.unidadStock, r.densidadMP);
+    const minG = toGramos(r.stockMin, r.unidadStock, r.densidadMP);
+    if(stG <= 0) totalAgotados++;
+    else if(minG > 0 && stG <= minG) totalBajos++;
+  });
+
+  const banner = document.getElementById("ingdb-alert-banner");
+  const bannerTxt = document.getElementById("ingdb-alert-text");
+  if(banner && bannerTxt){
+    if(totalBajos > 0 || totalAgotados > 0){
+      banner.style.display = "block";
+      bannerTxt.innerHTML = `Hay <strong>${totalAgotados}</strong> insumo(s) agotados (stock 0) y <strong>${totalBajos}</strong> insumo(s) por debajo del stock mínimo. Revisa las compras recomendadas.`;
+    } else {
+      banner.style.display = "none";
+    }
+  }
+
+  // Filtrado por búsqueda
+  if(q){
+    rows = rows.filter(r=>
+      (r.sku && r.sku.toLowerCase().includes(q)) ||
+      r.nombre.toLowerCase().includes(q) ||
+      (r.inci && r.inci.toLowerCase().includes(q)) ||
+      [...r.proveedores].some(p=>p.toLowerCase().includes(q))
+    );
+  }
+
+  // Filtrado por nivel de inventario
+  if(filtroStock === "low"){
+    rows = rows.filter(r => {
+      const minG = toGramos(r.stockMin, r.unidadStock, r.densidadMP);
+      const stG = toGramos(r.stock, r.unidadStock, r.densidadMP);
+      return minG > 0 && stG <= minG;
+    });
+  } else if(filtroStock === "out"){
+    rows = rows.filter(r => toGramos(r.stock, r.unidadStock, r.densidadMP) <= 0);
+  } else if(filtroStock === "ok"){
+    rows = rows.filter(r => {
+      const minG = toGramos(r.stockMin, r.unidadStock, r.densidadMP);
+      const stG = toGramos(r.stock, r.unidadStock, r.densidadMP);
+      return stG > minG;
+    });
+  }
+
   rows.sort((a,b)=>a.nombre.localeCompare(b.nombre));
-  if(!rows.length){ tbody.innerHTML = `<tr><td colspan="9" style="padding:16px;color:var(--muted)">Sin insumos registrados. Pulsa "+ Nuevo Insumo" para registrar uno.</td></tr>`; return; }
+
+  if(!rows.length){
+    tbody.innerHTML = `<tr><td colspan="12" style="padding:20px;text-align:center;color:var(--muted)">Sin insumos que coincidan con el filtro seleccionado.</td></tr>`;
+    return;
+  }
+
   tbody.innerHTML = rows.map(r=>{
     const dVal = r.densidadMP ? (Number(r.densidadMP).toFixed(3)) : (getPreloadedDensity(r.nombre, r.inci)||1.000).toFixed(3);
     const formulasStr = r.formulas.size ? [...r.formulas].join(", ") : "—";
+    const stG = toGramos(r.stock, r.unidadStock, r.densidadMP);
+    const minG = toGramos(r.stockMin, r.unidadStock, r.densidadMP);
+
+    let badgeStock = "";
+    if(stG <= 0){
+      badgeStock = `<span class="badge" style="background:rgba(240,74,122,.15);color:var(--danger);font-weight:600">🚨 Agotado</span>`;
+    } else if(minG > 0 && stG <= minG){
+      badgeStock = `<span class="badge" style="background:rgba(240,200,74,.15);color:var(--warn);font-weight:600">⚠️ Bajo</span>`;
+    } else {
+      badgeStock = `<span class="badge" style="background:rgba(125,222,82,.15);color:var(--ok);font-weight:600">✓ OK</span>`;
+    }
+
     return `
     <tr style="border-bottom:1px solid var(--border)" data-key="${esc(r.key)}">
       <td style="padding:8px 6px"><input type="checkbox" class="ingdb-check" value="${esc(r.key)}" onchange="updateMergeBtn()"></td>
       <td style="padding:8px 6px;font-family:var(--fm);font-size:11px;color:var(--accent2)">${esc(r.sku)}</td>
       <td style="padding:8px 6px;font-weight:500" ondblclick="openModalEditarInsumo('${esc(r.key)}')" title="Doble clic para editar">${esc(r.nombre)}</td>
       <td style="padding:8px 6px;font-size:11px;color:var(--muted);font-style:italic">${esc(r.inci||"—")}</td>
-      <td style="padding:8px 6px;font-family:var(--fm);font-size:11px" title="Densidad en g/mL">${dVal} g/mL</td>
+      <td style="padding:8px 6px;font-family:var(--fm);font-size:11px" title="Densidad en g/mL">${dVal}</td>
       <td style="padding:8px 6px;font-size:12px">${esc([...r.proveedores].join(", ")||"—")}</td>
       <td style="padding:8px 6px;font-family:var(--fm);font-size:12px">${r.precio!==null&&r.precio!==undefined?fmtMoney(r.precio)+" / "+r.unidad:"—"}</td>
+      <td style="padding:8px 6px;font-family:var(--fm);font-size:12px;text-align:right;${stG<=0?'color:var(--danger);font-weight:700':minG>0&&stG<=minG?'color:var(--warn);font-weight:600':''}">
+        ${r.stock||0} ${r.unidadStock||'g'}
+      </td>
+      <td style="padding:8px 6px;font-family:var(--fm);font-size:11px;text-align:right;color:var(--muted)">
+        ${r.stockMin>0?(r.stockMin+' '+(r.unidadStock||'g')):'—'}
+      </td>
+      <td style="padding:8px 6px;text-align:center">${badgeStock}</td>
       <td style="padding:8px 6px;font-size:11px;color:var(--muted)">${esc(formulasStr)}</td>
-      <td style="padding:8px 6px">
-        <div style="display:flex;gap:4px">
+      <td style="padding:8px 6px;text-align:center">
+        <div style="display:flex;gap:4px;justify-content:center">
+          <button class="btn btn-ghost btn-sm" onclick="openModalAjusteStock('${esc(r.key)}')" title="Entrada / Ajuste rápido de stock" style="font-weight:700">±</button>
           <button class="btn btn-ghost btn-sm" onclick="openModalEditarInsumo('${esc(r.key)}')" title="Editar insumo">✎</button>
           <button class="btn btn-ghost btn-sm" onclick="deleteIngredientFromDB('${esc(r.key)}')" title="Eliminar de la base de insumos">🗑️</button>
         </div>
@@ -1568,7 +1787,15 @@ function renderIngredientsDB(){
   updateMergeBtn();
 }
 
-// ── Modales de creación y edición directa de Insumos en el Catálogo ──
+function toggleFiltroInsumosBajos(){
+  const sel = document.getElementById("ingdb-filter-stock");
+  if(sel){
+    sel.value = sel.value === "low" ? "all" : "low";
+    renderIngredientsDB();
+  }
+}
+
+// ── Modales de creación y edición directa de Insumos con Inventario ──
 function openModalNuevoInsumo(){
   document.getElementById("modal-insumo-title").textContent = "Nuevo Insumo";
   document.getElementById("ins-edit-key").value = "";
@@ -1578,6 +1805,9 @@ function openModalNuevoInsumo(){
   document.getElementById("ins-densidad").value = "";
   document.getElementById("ins-precio").value = "";
   document.getElementById("ins-unidad").value = "g";
+  document.getElementById("ins-stock").value = "";
+  document.getElementById("ins-stock-min").value = "";
+  document.getElementById("ins-unidad-stock").value = "g";
   document.getElementById("ins-proveedor").value = "";
   document.getElementById("ins-sku").value = "";
   document.getElementById("insumo-error-msg").style.display = "none";
@@ -1621,6 +1851,9 @@ function openModalEditarInsumo(key){
   document.getElementById("ins-densidad").value = item.densidadMP || "";
   document.getElementById("ins-precio").value = (item.precio !== null && item.precio !== undefined) ? item.precio : "";
   document.getElementById("ins-unidad").value = item.unidad || "g";
+  document.getElementById("ins-stock").value = (item.stock !== undefined && item.stock !== null) ? item.stock : 0;
+  document.getElementById("ins-stock-min").value = (item.stockMin !== undefined && item.stockMin !== null) ? item.stockMin : 0;
+  document.getElementById("ins-unidad-stock").value = item.unidadStock || item.unidad || "g";
   document.getElementById("ins-proveedor").value = [...item.proveedores].join(", ") || "";
   document.getElementById("ins-sku").value = item.sku || generateSKU(item.nombre, item.fase);
   document.getElementById("insumo-error-msg").style.display = "none";
@@ -1638,6 +1871,9 @@ function guardarInsumoModal(){
   const dens = document.getElementById("ins-densidad")?.value;
   const precio = document.getElementById("ins-precio")?.value;
   const unidad = document.getElementById("ins-unidad")?.value || "g";
+  const stock = document.getElementById("ins-stock")?.value;
+  const stockMin = document.getElementById("ins-stock-min")?.value;
+  const unidadStock = document.getElementById("ins-unidad-stock")?.value || unidad;
   const proveedor = document.getElementById("ins-proveedor")?.value.trim();
   const sku = document.getElementById("ins-sku")?.value.trim();
   
@@ -1653,96 +1889,214 @@ function guardarInsumoModal(){
     applyIngredientRename_noRerender(editKey, nombre);
   }
   
-  rememberPrice(nombre, inci, precio, unidad, dens, proveedor, fase, sku);
+  rememberPrice(nombre, inci, precio, unidad, dens, proveedor, fase, sku, stock, stockMin, unidadStock);
   persistPriceDB();
   refreshAutocompleteLists();
   closeModal("modal-insumo");
   renderIngredientsDB();
 }
 
+// ── Modal de Ajuste Rápido de Stock (±) ──
+function openModalAjusteStock(key){
+  const idx = buildIngredientsIndex();
+  const item = idx[key];
+  if(!item) return;
+  document.getElementById("stock-adjust-key").value = key;
+  document.getElementById("stock-adjust-subtitle").textContent = `${item.nombre} (${item.sku})`;
+  document.getElementById("stock-adjust-current").textContent = `${item.stock||0} ${item.unidadStock||'g'}`;
+  document.getElementById("stock-adjust-type").value = "entrada";
+  document.getElementById("stock-adjust-qty").value = "";
+  document.getElementById("stock-adjust-unit").value = item.unidadStock || "g";
+  document.getElementById("stock-adjust-price").value = "";
+  document.getElementById("stock-adjust-note").value = "";
+  document.getElementById("stock-adjust-err").style.display = "none";
+  updateStockAdjustUI();
+  openModal("modal-stock-insumo");
+  setTimeout(() => document.getElementById("stock-adjust-qty")?.focus(), 100);
+}
+
+function updateStockAdjustUI(){
+  const type = document.getElementById("stock-adjust-type").value;
+  const label = document.getElementById("stock-adjust-qty-label");
+  if(label){
+    label.textContent = type === "ajuste" ? "Nuevo Conteo Total Físico" : type === "salida" ? "Cantidad a Descontar" : "Cantidad a Ingresar";
+  }
+}
+
+function guardarAjusteStockModal(){
+  const errEl = document.getElementById("stock-adjust-err");
+  if(errEl) errEl.style.display = "none";
+  const key = document.getElementById("stock-adjust-key").value;
+  const idx = buildIngredientsIndex();
+  const item = idx[key];
+  if(!item) return;
+
+  const type = document.getElementById("stock-adjust-type").value;
+  const qty = parseFloat(document.getElementById("stock-adjust-qty").value);
+  const unit = document.getElementById("stock-adjust-unit").value;
+  const newPrice = document.getElementById("stock-adjust-price").value;
+  const note = document.getElementById("stock-adjust-note").value.trim();
+
+  if(isNaN(qty) || qty < 0){
+    if(errEl){ errEl.textContent = "Ingresa una cantidad válida mayor o igual a 0."; errEl.style.display = "block"; }
+    return;
+  }
+
+  const p = priceDB[key] || {};
+  const currentStock = parseFloat(p.stock) || 0;
+  const dens = p.densidadMP || getPreloadedDensity(item.nombre, item.inci) || 1.0;
+  const uStock = p.unidadStock || item.unidadStock || "g";
+
+  // Convertir cantidad ingresada a la unidad base de stock del insumo
+  const qtyInGrams = toGramos(qty, unit, dens);
+  const qtyInStockUnit = fromGramos(qtyInGrams, uStock, dens);
+
+  let finalStock = currentStock;
+  if(type === "entrada"){
+    finalStock = currentStock + qtyInStockUnit;
+  } else if(type === "salida"){
+    finalStock = Math.max(0, currentStock - qtyInStockUnit);
+  } else if(type === "ajuste"){
+    finalStock = qtyInStockUnit;
+  }
+
+  p.stock = Math.round(finalStock * 1000) / 1000;
+  p.unidadStock = uStock;
+  if(newPrice !== "" && !isNaN(parseFloat(newPrice))){
+    p.precio = parseFloat(newPrice);
+  }
+  if(note){
+    p.ultimoLoteCompra = note;
+  }
+
+  rememberPrice(
+    p.nombre || item.nombre,
+    p.inci || item.inci,
+    p.precio,
+    p.unidadCosto || item.unidad,
+    p.densidadMP || item.densidadMP,
+    p.proveedor || [...item.proveedores][0],
+    p.fase || item.fase,
+    p.sku || item.sku,
+    p.stock,
+    p.stockMin || item.stockMin,
+    p.unidadStock
+  );
+
+  persistPriceDB();
+  closeModal("modal-stock-insumo");
+  renderIngredientsDB();
+}
+
+// ── Exportar Lista de Compras para Proveedores ──
+function exportShoppingListCSV(){
+  const idx = buildIngredientsIndex();
+  const esc2 = s => `"${String(s??"").replace(/"/g,'""')}"`;
+  const header = ["SKU","Materia Prima","INCI","Proveedor","Stock Actual","Stock Minimo","Cantidad Sugerida Compra","Unidad","Ultimo Costo Unitario","Total Estimado (COP)"];
+  const lines = [header.join(",")];
+
+  let totalEstimadoCompra = 0;
+
+  Object.values(idx).forEach(r => {
+    const stG = toGramos(r.stock, r.unidadStock, r.densidadMP);
+    const minG = toGramos(r.stockMin, r.unidadStock, r.densidadMP);
+
+    // Si está bajo stock o agotado
+    if(stG <= minG && minG > 0){
+      const faltaG = Math.max(minG * 2 - stG, minG);
+      const faltaEnUnidad = fromGramos(faltaG, r.unidadStock || "g", r.densidadMP);
+      const precioUnit = parseFloat(r.precio) || 0;
+      const subtotalEst = Math.round(faltaEnUnidad * precioUnit);
+      totalEstimadoCompra += subtotalEst;
+
+      lines.push([
+        esc2(r.sku),
+        esc2(r.nombre),
+        esc2(r.inci || ""),
+        esc2([...r.proveedores].join("; ") || "—"),
+        esc2(r.stock || 0),
+        esc2(r.stockMin || 0),
+        esc2(Math.round(faltaEnUnidad * 10) / 10),
+        esc2(r.unidadStock || "g"),
+        esc2(precioUnit || ""),
+        esc2(subtotalEst || "")
+      ].join(","));
+    }
+  });
+
+  if(lines.length === 1){
+    alert("✓ ¡Excelente noticia! No hay insumos por debajo del stock mínimo. Todo tu inventario está al día.");
+    return;
+  }
+
+  const blob = new Blob(["\uFEFF" + lines.join("\n")], {type:"text/csv;charset=utf-8"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `lista_compras_insumos_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+}
+
 function toggleAllIngdb(checked){
-  document.querySelectorAll(".ingdb-check").forEach(c=>c.checked=checked);
+  document.querySelectorAll(".ingdb-check").forEach(c => c.checked = checked);
   updateMergeBtn();
 }
+
 function updateMergeBtn(){
   const n = document.querySelectorAll(".ingdb-check:checked").length;
   const btn = document.getElementById("ingdb-merge-btn");
-  if(btn) btn.style.display = n>=2 ? "" : "none";
+  if(btn) btn.style.display = n >= 2 ? "" : "none";
 }
 
-// Renombra un ingrediente (por su key) en priceDB y en todas las fórmulas que lo usan
 function renameIngredient(oldKey){
   const idx = buildIngredientsIndex();
   const current = idx[oldKey]?.nombre || oldKey;
   const nuevo = prompt("Nuevo nombre para este ingrediente:", current);
-  if(!nuevo || !nuevo.trim() || nuevo.trim()===current) return;
-  applyIngredientRename(oldKey, nuevo.trim());
-}
-
-async function applyIngredientRename(oldKey, nuevoNombre){
-  const newKey = priceKey(nuevoNombre);
-  formulas.forEach(f=>{
-    (f.ingredientes||[]).forEach(i=>{
-      if(priceKey(i.nombre||i.inci)===oldKey) i.nombre = nuevoNombre;
+  if(!nuevo || !nuevo.trim() || nuevo.trim() === current) return;
+  const canon = nuevo.trim();
+  formulas.forEach(f => {
+    (f.ingredientes || []).forEach(i => {
+      if(priceKey(i.nombre || i.inci) === oldKey) i.nombre = canon;
     });
   });
-  if(priceDB[oldKey] && !priceDB[newKey]){ priceDB[newKey]=priceDB[oldKey]; }
-  if(oldKey!==newKey) delete priceDB[oldKey];
-  persist(); persistPriceDB(); renderIngredientsDB();
-  if(window.__forceFirestoreSyncNow) await window.__forceFirestoreSyncNow();
+  const newKey = priceKey(canon);
+  if(priceDB[oldKey] && !priceDB[newKey]) priceDB[newKey] = priceDB[oldKey];
+  if(oldKey !== newKey) delete priceDB[oldKey];
+  persist();
+  persistPriceDB();
+  renderIngredientsDB();
 }
 
-// Unifica 2+ ingredientes seleccionados en un solo nombre canónico
-async function mergeSelectedIngredients(){
-  const keys = [...document.querySelectorAll(".ingdb-check:checked")].map(c=>c.value);
-  if(keys.length<2) return;
+function mergeSelectedIngredients(){
+  const keys = [...document.querySelectorAll(".ingdb-check:checked")].map(c => c.value);
+  if(keys.length < 2) return;
   const idx = buildIngredientsIndex();
-  const nombres = keys.map(k=>idx[k]?.nombre||k);
-  const canon = prompt(`Vas a unificar:\n${nombres.join("\n")}\n\nEscribe el nombre final que quieres usar para todos:`, nombres[0]);
+  const nombres = keys.map(k => idx[k]?.nombre || k);
+  const canon = prompt(`Vas a unificar los siguientes nombres:\n${nombres.join("\n")}\n\nEscribe el nombre definitivo:`, nombres[0]);
   if(!canon || !canon.trim()) return;
   const canonTrim = canon.trim();
-  keys.forEach(k=>applyIngredientRename_noRerender(k, canonTrim));
-  persist(); persistPriceDB(); renderIngredientsDB();
-  if(window.__forceFirestoreSyncNow){
-    const ok = await window.__forceFirestoreSyncNow();
-    alert(ok ? "Ingredientes unificados y guardados." : "Se unificaron localmente, pero hubo un error al guardar en la nube. Vuelve a intentarlo antes de cerrar esta pestaña.");
-  } else {
-    alert("Ingredientes unificados.");
-  }
-}
-function applyIngredientRename_noRerender(oldKey, nuevoNombre){
-  const newKey = priceKey(nuevoNombre);
-  formulas.forEach(f=>{
-    (f.ingredientes||[]).forEach(i=>{
-      if(priceKey(i.nombre||i.inci)===oldKey) i.nombre = nuevoNombre;
+  keys.forEach(oldKey => {
+    formulas.forEach(f => {
+      (f.ingredientes || []).forEach(i => {
+        if(priceKey(i.nombre || i.inci) === oldKey) i.nombre = canonTrim;
+      });
     });
+    const newKey = priceKey(canonTrim);
+    if(priceDB[oldKey] && !priceDB[newKey]) priceDB[newKey] = priceDB[oldKey];
+    if(oldKey !== newKey) delete priceDB[oldKey];
   });
-  if(priceDB[oldKey] && !priceDB[newKey]){ priceDB[newKey]=priceDB[oldKey]; }
-  if(oldKey!==newKey) delete priceDB[oldKey];
-}
-
-// Elimina un ingrediente de la base de precios (no lo borra de fórmulas ya creadas, solo deja de aparecer como "en existencia")
-async function deleteIngredientFromDB(key){
-  const idx = buildIngredientsIndex();
-  const item = idx[key];
-  const nombre = item?.nombre || key;
-  const enUso = item?.formulas?.size || 0;
-  const msg = enUso>0
-    ? `"${nombre}" se usa en ${enUso} fórmula(s). Se eliminará del Catálogo de Insumos (deja de estar "en existencia"), pero seguirá apareciendo en esas fórmulas ya guardadas. ¿Continuar?`
-    : `¿Eliminar "${nombre}" del Catálogo de Insumos?`;
-  if(!confirm(msg)) return;
-  delete priceDB[key];
-  if(item){
-    if(item.nombre) delete priceDB[priceKey(item.nombre)];
-    if(item.inci) delete priceDB[priceKey(item.inci)];
-  }
+  persist();
   persistPriceDB();
-  refreshAutocompleteLists();
   renderIngredientsDB();
-  if(window.__forceFirestoreSyncNow) await window.__forceFirestoreSyncNow();
+  alert("Insumos unificados correctamente.");
 }
 
-// Refresca los <datalist> de autocompletado con lo almacenado en fórmulas Y en priceDB
+function deleteIngredientFromDB(key){
+  if(!confirm("¿Eliminar este insumo del Catálogo de Insumos? (No alterará las fórmulas ya guardadas)")) return;
+  delete priceDB[key];
+  persistPriceDB();
+  renderIngredientsDB();
+}
+
 // Exporta tabla de insumos lista para ERP / Excel en CSV estándar
 function exportIngredientsCSV(){
   const idx = buildIngredientsIndex();
@@ -2066,7 +2420,7 @@ Responde en español, corto y directo (máx. 4-5 líneas salvo que pidan más de
 
 
 // Registra/actualiza el precio y densidad de un ingrediente en la base global
-function rememberPrice(nombre, inci, precio, unidadCosto, densidadMP, proveedor, fase, customSKU){
+function rememberPrice(nombre, inci, precio, unidadCosto, densidadMP, proveedor, fase, customSKU, stock, stockMin, unidadStock){
   const cleanNombre = (nombre || "").trim();
   const cleanInci = (inci || "").trim();
   if(!cleanNombre && !cleanInci) return;
@@ -2094,11 +2448,15 @@ function rememberPrice(nombre, inci, precio, unidadCosto, densidadMP, proveedor,
     precio: (precio !== undefined && precio !== null && precio !== "" && !isNaN(parseFloat(precio))) ? parseFloat(precio) : (existing.precio !== undefined ? existing.precio : null),
     unidadCosto: unidadCosto || existing.unidadCosto || "g",
     densidadMP: dVal,
+    stock: (stock !== undefined && stock !== null && stock !== "" && !isNaN(parseFloat(stock))) ? parseFloat(stock) : (existing.stock !== undefined ? existing.stock : 0),
+    stockMin: (stockMin !== undefined && stockMin !== null && stockMin !== "" && !isNaN(parseFloat(stockMin))) ? parseFloat(stockMin) : (existing.stockMin !== undefined ? existing.stockMin : 0),
+    unidadStock: unidadStock || existing.unidadStock || unidadCosto || "g",
     ts: Date.now()
   };
 
-  if(kNombre) priceDB[kNombre] = Object.assign({}, existing, entry);
-  if(kInci && kInci !== kNombre) priceDB[kInci] = Object.assign({}, priceDB[kInci] || {}, entry);
+  const targetEntry = Object.assign({}, existing, entry);
+  if(kNombre) priceDB[kNombre] = targetEntry;
+  if(kInci && kInci !== kNombre) priceDB[kInci] = targetEntry;
   
   persistPriceDB();
 }
@@ -3084,39 +3442,137 @@ function openLote(id){
 }
 
 function renderLote(){
-  const g=parseFloat(document.getElementById("lote-size").value)||0;
-  const f=activeFormula; let html="";
-  let totalCosto=0; let hasCosts=false;
-  const renderGroup=(label,ings)=>{
+  const g = parseFloat(document.getElementById("lote-size")?.value) || 0;
+  const f = activeFormula;
+  if(!f || !f.ingredientes) return;
+
+  const idx = buildIngredientsIndex();
+  let totalCosto = 0;
+  let hasCosts = false;
+  const faltantes = [];
+
+  let html = "";
+
+  const renderGroup = (label, ings) => {
     if(!ings.length) return;
-    html+=`<div class="fase-group"><div class="fase-label">${label}</div>`;
-    ings.forEach(i=>{
-      const pct=parseFloat(i.porcentaje)||0;
-      const gr=(pct/100*g);
-      const precio=parseFloat(i.precio)||0;
-      const unidad=i.unidadCosto||"g";
-      const costoIng=precio>0?gr*costoAGramo(precio,unidad,f.densidad||1):null;
-      if(costoIng!==null){ totalCosto+=costoIng; hasCosts=true; }
-      html+=`<div class="lote-row">
-        <span>${esc(i.nombre||i.inci)}</span>
-        <span class="l-inci">${esc(i.inci)}</span>
-        <span>${pct}%</span>
-        <span class="l-g">${gr.toFixed(2)} g</span>
-        <span class="l-cost">${costoIng!==null?fmtMoney(costoIng):"—"}</span>
+    html += `<div class="fase-group"><div class="fase-label" style="font-weight:700">${esc(label)}</div>`;
+    ings.forEach(i => {
+      const pct = parseFloat(i.porcentaje) || 0;
+      const gr = (pct / 100 * g);
+      const precio = parseFloat(i.precio) || 0;
+      const dMP = i.densidadMP || getPreloadedDensity(i.nombre, i.inci) || f.densidad || 1.0;
+      const costoIng = precio > 0 ? gr * costoAGramo(precio, i.unidadCosto || "g", dMP) : null;
+      if(costoIng !== null){ totalCosto += costoIng; hasCosts = true; }
+
+      const key = priceKey(i.nombre || i.inci);
+      const raw = idx[key] || {};
+      const stockVal = (raw.stock !== undefined && raw.stock !== null) ? raw.stock : 0;
+      const uStock = raw.unidadStock || raw.unidad || "g";
+      const stockGramos = toGramos(stockVal, uStock, dMP);
+      const isSuficiente = stockGramos >= gr;
+      const faltaG = Math.max(0, gr - stockGramos);
+
+      if(!isSuficiente){
+        faltantes.push({ nombre: i.nombre || i.inci, requerido: gr, disponibleG: stockGramos, falta: faltaG, unidad: uStock });
+      }
+
+      html += `<div class="lote-row" style="display:grid;grid-template-columns:2fr 2fr 45px 75px 85px 85px 70px;gap:6px;align-items:center;font-size:12px;padding:6px 0;border-bottom:1px solid var(--border)">
+        <span style="font-weight:500">${esc(i.nombre || i.inci)}</span>
+        <span class="l-inci" style="font-size:10.5px;color:var(--muted)">${esc(i.inci || "—")}</span>
+        <span style="text-align:center">${pct}%</span>
+        <span class="l-g" style="text-align:right;font-weight:600">${gr.toFixed(2)} g</span>
+        <span style="text-align:right;font-size:11px;font-family:var(--fm);${!isSuficiente?'color:var(--danger);font-weight:700':''}">${stockVal} ${uStock}</span>
+        <span style="text-align:center">
+          ${isSuficiente
+            ? `<span style="display:inline-block;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600;background:rgba(125,222,82,.15);color:var(--ok)">✓ Disponible</span>`
+            : `<span style="display:inline-block;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600;background:rgba(240,74,122,.15);color:var(--danger)">⚠ Falta ${faltaG.toFixed(1)}g</span>`
+          }
+        </span>
+        <span class="l-cost" style="text-align:right;font-family:var(--fm)">${costoIng !== null ? fmtMoney(costoIng) : "—"}</span>
       </div>`;
     });
-    html+=`</div>`;
+    html += `</div>`;
   };
-  PHASES.slice(1).forEach(fase=>renderGroup(fase,f.ingredientes.filter(i=>i.fase===fase)));
-  renderGroup("Sin fase",f.ingredientes.filter(i=>!i.fase));
-  const tot=f.ingredientes.reduce((s,i)=>s+(parseFloat(i.porcentaje)||0),0);
-  html+=`<div class="lote-total">
-    <span>TOTAL</span><span></span>
-    <span>${tot.toFixed(2)}%</span>
-    <span class="l-g">${g.toFixed(2)} g</span>
-    <span class="l-cost">${hasCosts?fmtMoney(totalCosto):"—"}</span>
+
+  PHASES.slice(1).forEach(fase => renderGroup(fase, f.ingredientes.filter(i => (i.fase || "") === fase)));
+  renderGroup("Sin fase", f.ingredientes.filter(i => !i.fase));
+
+  const totPct = f.ingredientes.reduce((s, i) => s + (parseFloat(i.porcentaje) || 0), 0);
+  html += `<div class="lote-total" style="display:grid;grid-template-columns:2fr 2fr 45px 75px 85px 85px 70px;gap:6px;font-size:12px;padding:8px 0;font-weight:700;border-top:2px solid var(--border)">
+    <span>TOTAL LOTE</span><span></span>
+    <span style="text-align:center">${totPct.toFixed(2)}%</span>
+    <span class="l-g" style="text-align:right">${g.toFixed(2)} g</span>
+    <span></span>
+    <span style="text-align:center">${faltantes.length === 0 ? '✓ Completo' : faltantes.length + ' faltante(s)'}</span>
+    <span class="l-cost" style="text-align:right">${hasCosts ? fmtMoney(totalCosto) : "—"}</span>
   </div>`;
-  document.getElementById("lote-cantidades-body").innerHTML=html;
+
+  document.getElementById("lote-cantidades-body").innerHTML = html;
+
+  // Actualizar banner de verificación de inventario
+  const banner = document.getElementById("lote-inventory-banner");
+  if(banner){
+    if(faltantes.length === 0){
+      banner.innerHTML = `<div style="background:rgba(125,222,82,.12);border:1px solid var(--ok);border-radius:8px;padding:10px 14px;display:flex;align-items:center;gap:10px;font-size:12.5px">
+        <span style="font-size:18px">🟢</span>
+        <div>
+          <strong style="color:var(--ok)">Inventario Verificado:</strong> Tienes suficiente materia prima en stock para fabricar este lote de <strong>${g} g</strong> sin faltantes.
+        </div>
+      </div>`;
+    } else {
+      banner.innerHTML = `<div style="background:rgba(240,74,122,.12);border:1px solid var(--danger);border-radius:8px;padding:10px 14px;display:flex;align-items:center;gap:10px;font-size:12.5px">
+        <span style="font-size:18px">🔴</span>
+        <div>
+          <strong style="color:var(--danger)">Stock Insuficiente:</strong> Faltan existencias en <strong>${faltantes.length}</strong> materia(s) prima(s) para este lote de ${g} g. Revisa las cantidades en rojo abajo.
+        </div>
+      </div>`;
+    }
+  }
+}
+
+// Descontar materias primas del inventario al fabricar el lote
+function descontarStockLote(){
+  const g = parseFloat(document.getElementById("lote-size")?.value) || 0;
+  if(g <= 0) return;
+  const f = activeFormula;
+  if(!f || !f.ingredientes || !f.ingredientes.length) return;
+
+  if(!confirm(`¿Confirmas la fabricación de este lote de ${g} g de "${f.nombre}"?\n\nSe descontará el consumo real de cada materia prima de tu inventario de insumos.`)){
+    return;
+  }
+
+  let count = 0;
+  f.ingredientes.forEach(i => {
+    const pct = parseFloat(i.porcentaje) || 0;
+    const gr = (pct / 100 * g);
+    const key = priceKey(i.nombre || i.inci);
+    if(!key) return;
+
+    if(!priceDB[key]){
+      rememberPrice(i.nombre, i.inci, i.precio, i.unidadCosto, i.densidadMP, i.proveedor, i.fase);
+    }
+
+    const p = priceDB[key];
+    const uStock = p.unidadStock || p.unidadCosto || "g";
+    const dens = p.densidadMP || getPreloadedDensity(p.nombre, p.inci) || 1.0;
+    const gastoEnUnidad = fromGramos(gr, uStock, dens);
+
+    const newStock = Math.max(0, Math.round(((parseFloat(p.stock) || 0) - gastoEnUnidad) * 1000) / 1000);
+    p.stock = newStock;
+    const kInci = priceKey(p.inci);
+    if(kInci && priceDB[kInci] && priceDB[kInci] !== p){
+      priceDB[kInci].stock = newStock;
+    }
+    count++;
+  });
+
+  persistPriceDB();
+  renderLote();
+  if(document.getElementById("view-ingredientsdb")?.classList.contains("active")){
+    renderIngredientsDB();
+  }
+
+  alert(`✓ ¡Fabricación registrada! Se descontaron ${count} materias primas de tu inventario.`);
 }
 
 async function generarProcedimiento(){
@@ -3390,6 +3846,28 @@ async function printLote(){
   const f = activeFormula;
   if(!f) return;
   const g = parseFloat(document.getElementById("lote-size")?.value) || f.loteRef || 1000;
+
+  // Verificación de stock antes de generar el Batch Record oficial
+  const faltantesAlerta = [];
+  const idxParaLote = buildIngredientsIndex();
+  f.ingredientes.forEach(i => {
+    const pct = parseFloat(i.porcentaje) || 0;
+    const gr = (pct / 100 * g);
+    const key = priceKey(i.nombre || i.inci);
+    const raw = idxParaLote[key] || {};
+    const stockG = toGramos(raw.stock || 0, raw.unidadStock || "g", raw.densidadMP);
+    if(stockG < gr){
+      faltantesAlerta.push(`- ${i.nombre || i.inci} (Requerido: ${gr.toFixed(1)}g | En Stock: ${raw.stock||0} ${raw.unidadStock||'g'})`);
+    }
+  });
+
+  if(faltantesAlerta.length > 0){
+    const proceder = confirm(`⚠ ATENCIÓN - STOCK INSUFICIENTE PARA FABRICACIÓN:\n\nHay ${faltantesAlerta.length} materia(s) prima(s) con existencias menores a las requeridas para este lote:\n\n` +
+      faltantesAlerta.slice(0, 6).join("\n") +
+      (faltantesAlerta.length > 6 ? `\n... y ${faltantesAlerta.length - 6} más` : "") +
+      `\n\n¿Deseas generar la Hoja de Fabricación de Lote (BMR) de todas formas?`);
+    if(!proceder) return;
+  }
   const loteCode = document.getElementById("bmr-lote-code")?.value.trim() || ("LOT-" + new Date().toISOString().slice(0,10).replace(/-/g,"") + "-01");
   const operario = document.getElementById("bmr-operario")?.value.trim() || "Operario Responsable";
   const verificador = document.getElementById("bmr-verificador")?.value.trim() || "Control de Calidad / QA";
