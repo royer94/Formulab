@@ -1307,6 +1307,117 @@ select.input{cursor:pointer;appearance:none;
   </div>
 </div>
 
+<!-- MODAL: ELIMINAR / FUSIONAR INSUMO EN USO -->
+<div class="modal-backdrop" id="modal-eliminar-insumo">
+  <div class="modal-box" style="max-width:540px">
+    <div class="modal-header">
+      <div>
+        <span class="modal-title" style="color:var(--danger)">🗑️ Gestionar Eliminación de Insumo</span>
+        <div id="del-insumo-subtitle" style="font-size:12px;color:var(--muted);margin-top:2px"></div>
+      </div>
+      <button class="modal-close" onclick="closeModal('modal-eliminar-insumo')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="del-insumo-key" value="">
+      <input type="hidden" id="del-insumo-nombre" value="">
+
+      <!-- Advertencia de Fórmulas -->
+      <div style="background:rgba(240,74,122,.1);border:1px solid rgba(240,74,122,.3);border-radius:8px;padding:12px;margin-bottom:14px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:18px">⚠️</span>
+          <div>
+            <strong style="color:var(--danger);font-size:13px" id="del-insumo-warning-title">Este insumo está presente en fórmulas activas</strong>
+            <div style="font-size:12px;color:var(--muted);margin-top:2px">Para eliminarlo sin romper tus formulaciones cosméticas, selecciona cómo proceder:</div>
+          </div>
+        </div>
+        <div id="del-insumo-formulas-list" style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px"></div>
+      </div>
+
+      <!-- Opciones -->
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <!-- Opción 1: Reemplazar / Fusionar -->
+        <label style="display:flex;gap:10px;align-items:flex-start;background:var(--surface2);padding:12px;border-radius:8px;cursor:pointer;border:1px solid var(--border)">
+          <input type="radio" name="del-insumo-action" id="del-act-replace" value="replace" checked onchange="onDelActionChange()" style="margin-top:3px">
+          <div style="flex:1">
+            <strong style="display:block;font-size:13px;color:var(--text)">1. Reemplazar / Fusionar con otro insumo del catálogo (Recomendado)</strong>
+            <div style="font-size:12px;color:var(--muted);margin-top:3px">
+              Actualiza automáticamente todas las fórmulas para que usen el insumo que elijas, y elimina este duplicado definitivamente.
+            </div>
+            
+            <div id="del-replace-box" style="margin-top:10px">
+              <label class="fl" style="font-size:11px">Insumo de reemplazo (Destino):</label>
+              <select class="input" id="del-target-select" style="font-size:12px;width:100%"></select>
+              
+              <label style="display:flex;gap:8px;align-items:center;margin-top:8px;font-size:12px;cursor:pointer;color:var(--muted)">
+                <input type="checkbox" id="del-transfer-stock" checked>
+                <span>Transferir las existencias de stock al insumo de reemplazo</span>
+              </label>
+            </div>
+          </div>
+        </label>
+
+        <!-- Opción 2: Quitar de las fórmulas -->
+        <label style="display:flex;gap:10px;align-items:flex-start;background:var(--surface2);padding:12px;border-radius:8px;cursor:pointer;border:1px solid var(--border)">
+          <input type="radio" name="del-insumo-action" id="del-act-remove" value="remove" onchange="onDelActionChange()" style="margin-top:3px">
+          <div style="flex:1">
+            <strong style="display:block;font-size:13px;color:var(--danger)">2. Quitar de las fórmulas y eliminar del catálogo</strong>
+            <div style="font-size:12px;color:var(--muted);margin-top:3px">
+              Elimina este ingrediente de todas las fórmulas indicadas y borra por completo el insumo del catálogo.
+            </div>
+          </div>
+        </label>
+      </div>
+
+      <div id="del-insumo-error" style="color:var(--danger);font-size:12px;margin-top:10px;display:none"></div>
+    </div>
+    <div class="modal-footer" style="display:flex;justify-content:flex-end;gap:8px">
+      <button class="btn btn-ghost" onclick="closeModal('modal-eliminar-insumo')">Cancelar</button>
+      <button class="btn btn-danger" onclick="ejecutarEliminarInsumo()">Proceder y Aplicar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: UNIFICAR INSUMOS SELECCIONADOS -->
+<div class="modal-backdrop" id="modal-unificar-insumos">
+  <div class="modal-box" style="max-width:580px">
+    <div class="modal-header">
+      <div>
+        <span class="modal-title">🔗 Unificar Insumos Duplicados</span>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px">Consolida materias primas duplicadas en un único insumo maestro</div>
+      </div>
+      <button class="modal-close" onclick="closeModal('modal-unificar-insumos')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="font-size:13px;margin-bottom:12px;color:var(--text)">
+        Selecciona cuál de los siguientes insumos deseas conservar como el <strong>Registro Maestro (Canónico)</strong>:
+      </div>
+
+      <div id="unify-items-list" style="display:flex;flex-direction:column;gap:8px;max-height:280px;overflow-y:auto;padding-right:4px">
+        <!-- Renderizado dinámicamente con radios -->
+      </div>
+
+      <div style="background:var(--surface2);padding:10px 12px;border-radius:8px;margin-top:12px">
+        <label style="display:flex;gap:8px;align-items:center;font-size:12px;cursor:pointer">
+          <input type="checkbox" id="unify-sum-stock" checked>
+          <span><strong>Sumar existencias de inventario</strong> de todos los insumos unificados</span>
+        </label>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px;margin-left:22px">
+          Se acumulará el stock de los duplicados en el insumo maestro para no perder inventario.
+        </div>
+      </div>
+
+      <div style="font-size:11px;color:var(--muted);margin-top:10px">
+        💡 <em>Al unificar, todas las fórmulas donde se usen los duplicados pasarán a usar el insumo maestro, y los registros duplicados se eliminarán definitivamente.</em>
+      </div>
+      <div id="unify-error-msg" style="color:var(--danger);font-size:12px;margin-top:8px;display:none"></div>
+    </div>
+    <div class="modal-footer" style="display:flex;justify-content:flex-end;gap:8px">
+      <button class="btn btn-ghost" onclick="closeModal('modal-unificar-insumos')">Cancelar</button>
+      <button class="btn btn-primary" onclick="ejecutarUnificarInsumos()">🔗 Unificar y Eliminar Duplicados</button>
+    </div>
+  </div>
+</div>
+
 <!-- MODAL: LOTE -->
 <div class="modal-backdrop" id="modal-lote">
   <div class="modal-box" style="max-width:820px">
@@ -1654,7 +1765,7 @@ function buildIngredientsIndex(){
     const nombre = (p.nombre || k).trim();
     if(!nombre) return;
     const key = priceKey(nombre);
-    if(k !== key && priceDB[key]) return; // Evitar que alias INCI desactualizado sobreescriba el canónico
+    if(k !== key) return; // 'k' es un alias secundario (ej. INCI), omitir para evitar duplicados o resurrección
     if(!idx[key]){
       const provs = new Set(Array.isArray(p.proveedores) ? p.proveedores : (p.proveedor ? [p.proveedor] : []));
       idx[key] = {
@@ -2096,54 +2207,425 @@ function updateMergeBtn(){
   if(btn) btn.style.display = n >= 2 ? "" : "none";
 }
 
+// ── Funciones de Depuración, Purga y Unificación de Insumos ──
+function purgeIngredientFromDB(targetKey, targetNombre){
+  const kCanon = priceKey(targetKey);
+  const nCanon = targetNombre ? priceKey(targetNombre) : "";
+  const keysToDelete = new Set();
+  
+  Object.keys(priceDB).forEach(k => {
+    const p = priceDB[k];
+    if(k === kCanon) keysToDelete.add(k);
+    if(nCanon && k === nCanon) keysToDelete.add(k);
+    if(p && typeof p === "object"){
+      const pkNom = priceKey(p.nombre || "");
+      const pkSku = priceKey(p.sku || "");
+      if(pkNom === kCanon || (nCanon && pkNom === nCanon)) keysToDelete.add(k);
+      if(pkSku && (pkSku === kCanon || (nCanon && pkSku === nCanon))) keysToDelete.add(k);
+    }
+  });
+  
+  keysToDelete.forEach(k => delete priceDB[k]);
+}
+
+function mergeStockIntoCanonical(oldKey, oldItem, canonicalKey, canonicalItem){
+  const pOld = priceDB[oldKey] || oldItem || {};
+  const pCanon = priceDB[canonicalKey] || canonicalItem || {};
+  const oldStock = parseFloat(pOld.stock || oldItem?.stock) || 0;
+  if(oldStock <= 0) return;
+
+  const oldUnit = pOld.unidadStock || oldItem?.unidadStock || "g";
+  const canonUnit = pCanon.unidadStock || canonicalItem?.unidadStock || "g";
+  const dens = canonicalItem?.densidadMP || pCanon.densidadMP || 1.0;
+
+  const oldStockGrams = toGramos(oldStock, oldUnit, dens);
+  const oldStockInCanonUnit = fromGramos(oldStockGrams, canonUnit, dens);
+
+  const curCanonStock = parseFloat(pCanon.stock || canonicalItem?.stock) || 0;
+  pCanon.stock = Math.round((curCanonStock + oldStockInCanonUnit) * 1000) / 1000;
+  pCanon.unidadStock = canonUnit;
+  priceDB[canonicalKey] = pCanon;
+}
+
+function replaceIngredientInFormulas(oldKey, oldNombre, canonicalItem){
+  const kOld = priceKey(oldKey);
+  const nOld = oldNombre ? priceKey(oldNombre) : "";
+  let countFormulas = 0;
+
+  formulas.forEach(f => {
+    let modified = false;
+    (f.ingredientes || []).forEach(i => {
+      const kIng = priceKey(i.nombre);
+      if(kIng === kOld || (nOld && kIng === nOld)){
+        i.nombre = canonicalItem.nombre;
+        if(canonicalItem.inci) i.inci = canonicalItem.inci;
+        if(canonicalItem.densidadMP) i.densidadMP = canonicalItem.densidadMP;
+        if(canonicalItem.unidad) i.unidadCosto = canonicalItem.unidad;
+        if(canonicalItem.precio !== null && canonicalItem.precio !== undefined) i.precio = canonicalItem.precio;
+        modified = true;
+      }
+    });
+
+    if(modified){
+      countFormulas++;
+      // Consolidar filas duplicadas del mismo ingrediente en la misma fase si coincidieran
+      const mergedMap = new Map();
+      const newIngs = [];
+      (f.ingredientes || []).forEach(i => {
+        const rowKey = priceKey(i.nombre) + ":::" + (i.fase || "");
+        if(mergedMap.has(rowKey)){
+          const existing = mergedMap.get(rowKey);
+          existing.porcentaje = Math.round(((parseFloat(existing.porcentaje)||0) + (parseFloat(i.porcentaje)||0)) * 1000) / 1000;
+        } else {
+          mergedMap.set(rowKey, i);
+          newIngs.push(i);
+        }
+      });
+      f.ingredientes = newIngs;
+      f.ts = Date.now();
+    }
+  });
+
+  return countFormulas;
+}
+
+function removeIngredientFromFormulas(oldKey, oldNombre){
+  const kOld = priceKey(oldKey);
+  const nOld = oldNombre ? priceKey(oldNombre) : "";
+  let countFormulas = 0;
+
+  formulas.forEach(f => {
+    const beforeLen = (f.ingredientes || []).length;
+    f.ingredientes = (f.ingredientes || []).filter(i => {
+      const kIng = priceKey(i.nombre);
+      return kIng !== kOld && (!nOld || kIng !== nOld);
+    });
+    if(f.ingredientes.length !== beforeLen){
+      countFormulas++;
+      f.ts = Date.now();
+    }
+  });
+
+  return countFormulas;
+}
+
+function applyIngredientRename_noRerender(oldKey, newNombre){
+  const idx = buildIngredientsIndex();
+  const oldItem = idx[oldKey] || priceDB[oldKey] || {};
+  const oldNombre = oldItem.nombre || oldKey;
+  
+  // Reemplazar en fórmulas
+  formulas.forEach(f => {
+    let mod = false;
+    (f.ingredientes || []).forEach(i => {
+      const kIng = priceKey(i.nombre);
+      if(kIng === priceKey(oldKey) || kIng === priceKey(oldNombre)){
+        i.nombre = newNombre.trim();
+        mod = true;
+      }
+    });
+    if(mod) f.ts = Date.now();
+  });
+  
+  // Limpiar priceDB anterior
+  purgeIngredientFromDB(oldKey, oldNombre);
+  persist();
+}
+
+function findBestIngredientMatch(sourceItem, candidates){
+  if(!candidates || !candidates.length) return "";
+  const sNom = (sourceItem.nombre || "").toLowerCase().trim();
+  const sInci = (sourceItem.inci || "").toLowerCase().trim();
+  
+  if(sInci){
+    const inciMatch = candidates.find(c => c.inci && c.inci.toLowerCase().trim() === sInci);
+    if(inciMatch) return inciMatch.key;
+  }
+  
+  const stopWords = new Set(["de", "del", "la", "el", "en", "virgen", "puro", "natural", "organico", "orgánico", "extra", "aceite", "extracto", "manteca"]);
+  const sWords = sNom.split(/\s+/).filter(w => w.length > 2 && !stopWords.has(w));
+  
+  let bestKey = "";
+  let bestScore = -1;
+  
+  candidates.forEach(c => {
+    const cNom = (c.nombre || "").toLowerCase();
+    let score = 0;
+    if(cNom.includes(sNom) || sNom.includes(cNom)) score += 5;
+    sWords.forEach(w => {
+      if(cNom.includes(w)) score += 3;
+    });
+    if(score > bestScore && score > 0){
+      bestScore = score;
+      bestKey = c.key;
+    }
+  });
+  
+  return bestKey || candidates[0].key;
+}
+
 function renameIngredient(oldKey){
   const idx = buildIngredientsIndex();
   const current = idx[oldKey]?.nombre || oldKey;
   const nuevo = prompt("Nuevo nombre para este ingrediente:", current);
   if(!nuevo || !nuevo.trim() || nuevo.trim() === current) return;
   const canon = nuevo.trim();
+
+  // Actualizar fórmulas
   formulas.forEach(f => {
+    let mod = false;
     (f.ingredientes || []).forEach(i => {
-      if(priceKey(i.nombre || i.inci) === oldKey) i.nombre = canon;
+      if(priceKey(i.nombre || i.inci) === oldKey || priceKey(i.nombre) === priceKey(current)){
+        i.nombre = canon;
+        mod = true;
+      }
     });
+    if(mod) f.ts = Date.now();
   });
+
+  // Mover en priceDB y purgar clave vieja
   const newKey = priceKey(canon);
-  if(priceDB[oldKey] && !priceDB[newKey]) priceDB[newKey] = priceDB[oldKey];
-  if(oldKey !== newKey) delete priceDB[oldKey];
+  const oldItem = priceDB[oldKey] || idx[oldKey] || {};
+  if(oldItem){
+    const updated = Object.assign({}, oldItem, { nombre: canon, ts: Date.now() });
+    priceDB[newKey] = updated;
+  }
+  if(oldKey !== newKey){
+    purgeIngredientFromDB(oldKey, current);
+  }
+
   persist();
   persistPriceDB();
+  refreshAutocompleteLists();
   renderIngredientsDB();
 }
 
 function mergeSelectedIngredients(){
-  const keys = [...document.querySelectorAll(".ingdb-check:checked")].map(c => c.value);
-  if(keys.length < 2) return;
+  const checkedBoxes = [...document.querySelectorAll(".ingdb-check:checked")];
+  const keys = checkedBoxes.map(c => c.value);
+  if(keys.length < 2){
+    alert("Selecciona al menos 2 insumos para unificar.");
+    return;
+  }
+
   const idx = buildIngredientsIndex();
-  const nombres = keys.map(k => idx[k]?.nombre || k);
-  const canon = prompt(`Vas a unificar los siguientes nombres:\n${nombres.join("\n")}\n\nEscribe el nombre definitivo:`, nombres[0]);
-  if(!canon || !canon.trim()) return;
-  const canonTrim = canon.trim();
-  keys.forEach(oldKey => {
-    formulas.forEach(f => {
-      (f.ingredientes || []).forEach(i => {
-        if(priceKey(i.nombre || i.inci) === oldKey) i.nombre = canonTrim;
-      });
-    });
-    const newKey = priceKey(canonTrim);
-    if(priceDB[oldKey] && !priceDB[newKey]) priceDB[newKey] = priceDB[oldKey];
-    if(oldKey !== newKey) delete priceDB[oldKey];
+  const selectedItems = keys.map(k => ({ key: k, item: idx[k] || priceDB[k] || { nombre: k } }));
+
+  // Ordenar para sugerir como maestro el que tenga más fórmulas o más stock
+  selectedItems.sort((a,b) => {
+    const fA = a.item.formulas ? a.item.formulas.size : 0;
+    const fB = b.item.formulas ? b.item.formulas.size : 0;
+    if(fB !== fA) return fB - fA;
+    return (parseFloat(b.item.stock)||0) - (parseFloat(a.item.stock)||0);
   });
+
+  const listEl = document.getElementById("unify-items-list");
+  if(listEl){
+    listEl.innerHTML = selectedItems.map((s, index) => {
+      const it = s.item;
+      const fCount = it.formulas ? it.formulas.size : 0;
+      return `
+        <label style="display:flex;gap:12px;align-items:flex-start;background:var(--surface2);padding:10px 12px;border-radius:8px;cursor:pointer;border:1px solid ${index===0?'var(--accent)':'var(--border)'}">
+          <input type="radio" name="merge-master-radio" value="${esc(s.key)}" ${index === 0 ? "checked" : ""} style="margin-top:3px">
+          <div style="flex:1">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap">
+              <strong style="font-size:13px;color:var(--text)">${esc(it.nombre || s.key)}</strong>
+              <span style="font-family:var(--fm);font-size:11px;color:var(--accent2)">${esc(it.sku || 'Sin SKU')}</span>
+            </div>
+            <div style="font-size:11px;color:var(--muted);font-style:italic;margin-top:2px">${esc(it.inci || 'Sin INCI')}</div>
+            <div style="display:flex;gap:14px;font-size:11px;color:var(--muted);margin-top:4px">
+              <span>📦 Stock: <strong style="color:var(--text)">${it.stock || 0} ${it.unidadStock || 'g'}</strong></span>
+              <span>📋 Usado en: <strong style="color:var(--text)">${fCount} fórmula(s)</strong></span>
+            </div>
+          </div>
+        </label>
+      `;
+    }).join("");
+  }
+
+  document.getElementById("unify-sum-stock").checked = true;
+  document.getElementById("unify-error-msg").style.display = "none";
+  openModal("modal-unificar-insumos");
+}
+
+function ejecutarUnificarInsumos(){
+  const errEl = document.getElementById("unify-error-msg");
+  if(errEl) errEl.style.display = "none";
+
+  const masterRadio = document.querySelector('input[name="merge-master-radio"]:checked');
+  if(!masterRadio){
+    if(errEl){ errEl.textContent = "Selecciona cuál insumo será el Registro Maestro."; errEl.style.display = "block"; }
+    return;
+  }
+
+  const masterKey = masterRadio.value;
+  const idx = buildIngredientsIndex();
+  const masterItem = idx[masterKey];
+  if(!masterItem){
+    if(errEl){ errEl.textContent = "El insumo maestro seleccionado no es válido."; errEl.style.display = "block"; }
+    return;
+  }
+
+  const checkedBoxes = [...document.querySelectorAll(".ingdb-check:checked")];
+  const allKeys = checkedBoxes.map(c => c.value);
+  const secondaryKeys = allKeys.filter(k => k !== masterKey);
+
+  if(secondaryKeys.length === 0){
+    closeModal("modal-unificar-insumos");
+    return;
+  }
+
+  const sumStock = document.getElementById("unify-sum-stock")?.checked;
+  let totalFormulasUpdated = 0;
+
+  secondaryKeys.forEach(secKey => {
+    const secItem = idx[secKey] || priceDB[secKey] || {};
+    const secNombre = secItem.nombre || secKey;
+
+    if(sumStock){
+      mergeStockIntoCanonical(secKey, secItem, masterKey, masterItem);
+    }
+
+    const nFormulas = replaceIngredientInFormulas(secKey, secNombre, masterItem);
+    totalFormulasUpdated += nFormulas;
+
+    purgeIngredientFromDB(secKey, secNombre);
+  });
+
   persist();
   persistPriceDB();
+  refreshAutocompleteLists();
+  closeModal("modal-unificar-insumos");
   renderIngredientsDB();
-  alert("Insumos unificados correctamente.");
+
+  alert(`✓ ¡Unificación completada con éxito!\nSe unificaron ${secondaryKeys.length} duplicado(s) en "${masterItem.nombre}".\nSe actualizaron ${totalFormulasUpdated} fórmula(s) y se eliminaron definitivamente los duplicados.`);
 }
 
 function deleteIngredientFromDB(key){
-  if(!confirm("¿Eliminar este insumo del Catálogo de Insumos? (No alterará las fórmulas ya guardadas)")) return;
-  delete priceDB[key];
-  persistPriceDB();
-  renderIngredientsDB();
+  const idx = buildIngredientsIndex();
+  const item = idx[key];
+  if(!item){
+    purgeIngredientFromDB(key);
+    persistPriceDB();
+    renderIngredientsDB();
+    return;
+  }
+
+  const formulaCount = item.formulas ? item.formulas.size : 0;
+
+  // Si no está en ninguna fórmula, borrado directo permanente
+  if(formulaCount === 0){
+    if(!confirm(`¿Eliminar definitivamente el insumo "${item.nombre}" (${item.sku || 'Sin SKU'}) del catálogo de insumos?`)) return;
+    purgeIngredientFromDB(key, item.nombre);
+    persistPriceDB();
+    refreshAutocompleteLists();
+    renderIngredientsDB();
+    alert(`✓ Insumo "${item.nombre}" eliminado del catálogo.`);
+    return;
+  }
+
+  // Si está en fórmulas activas, abrir modal interactivo para resolver el uso
+  document.getElementById("del-insumo-key").value = key;
+  document.getElementById("del-insumo-nombre").value = item.nombre;
+  document.getElementById("del-insumo-subtitle").textContent = `${item.nombre} (${item.sku || 'SKU'} — ${item.stock || 0} ${item.unidadStock || 'g'})`;
+  document.getElementById("del-insumo-warning-title").textContent = `Este insumo está presente en ${formulaCount} fórmula(s)`;
+
+  const fListEl = document.getElementById("del-insumo-formulas-list");
+  if(fListEl){
+    fListEl.innerHTML = [...item.formulas].map(fn => `<span class="badge" style="background:rgba(240,74,122,.15);color:var(--danger);font-size:11px">📋 ${esc(fn)}</span>`).join("");
+  }
+
+  // Llenar select de insumos de reemplazo excluyendo el insumo actual
+  const targetSelect = document.getElementById("del-target-select");
+  const candidates = Object.entries(idx)
+    .filter(([k, r]) => k !== key && priceKey(r.nombre) !== priceKey(item.nombre))
+    .map(([k, r]) => ({ key: k, ...r }))
+    .sort((a,b) => a.nombre.localeCompare(b.nombre));
+
+  if(targetSelect){
+    if(candidates.length === 0){
+      targetSelect.innerHTML = `<option value="">No hay otros insumos en el catálogo</option>`;
+      targetSelect.disabled = true;
+    } else {
+      targetSelect.disabled = false;
+      const bestMatchKey = findBestIngredientMatch(item, candidates);
+      targetSelect.innerHTML = candidates.map(c => `
+        <option value="${esc(c.key)}" ${c.key === bestMatchKey ? "selected" : ""}>
+          ${esc(c.nombre)} [${esc(c.sku)}] ${c.inci ? "("+esc(c.inci)+")" : ""} (${c.formulas.size} fórmulas)
+        </option>
+      `).join("");
+    }
+  }
+
+  document.getElementById("del-act-replace").checked = true;
+  document.getElementById("del-transfer-stock").checked = true;
+  document.getElementById("del-insumo-error").style.display = "none";
+  onDelActionChange();
+
+  openModal("modal-eliminar-insumo");
+}
+
+function onDelActionChange(){
+  const isReplace = document.getElementById("del-act-replace")?.checked;
+  const box = document.getElementById("del-replace-box");
+  if(box) box.style.display = isReplace ? "block" : "none";
+}
+
+function ejecutarEliminarInsumo(){
+  const errEl = document.getElementById("del-insumo-error");
+  if(errEl) errEl.style.display = "none";
+
+  const key = document.getElementById("del-insumo-key").value;
+  const idx = buildIngredientsIndex();
+  const item = idx[key];
+  if(!item){
+    closeModal("modal-eliminar-insumo");
+    return;
+  }
+
+  const action = document.querySelector('input[name="del-insumo-action"]:checked')?.value || "replace";
+
+  if(action === "replace"){
+    const targetKey = document.getElementById("del-target-select")?.value;
+    if(!targetKey || targetKey === key){
+      if(errEl){ errEl.textContent = "Selecciona un insumo de reemplazo válido."; errEl.style.display = "block"; }
+      return;
+    }
+    const targetItem = idx[targetKey];
+    if(!targetItem){
+      if(errEl){ errEl.textContent = "El insumo de reemplazo seleccionado no existe."; errEl.style.display = "block"; }
+      return;
+    }
+
+    const transferStock = document.getElementById("del-transfer-stock")?.checked;
+    if(transferStock){
+      mergeStockIntoCanonical(key, item, targetKey, targetItem);
+    }
+
+    const updatedCount = replaceIngredientInFormulas(key, item.nombre, targetItem);
+    purgeIngredientFromDB(key, item.nombre);
+
+    persist();
+    persistPriceDB();
+    refreshAutocompleteLists();
+    closeModal("modal-eliminar-insumo");
+    renderIngredientsDB();
+    alert(`✓ ¡Insumo unificado y eliminado exitosamente!\nSe actualizaron ${updatedCount} fórmula(s) para usar "${targetItem.nombre}". El insumo duplicado fue borrado del catálogo.`);
+  } else if(action === "remove"){
+    if(!confirm(`¿Estás completamente seguro de quitar "${item.nombre}" de las ${item.formulas.size} fórmula(s) donde aparece y eliminarlo del catálogo?`)){
+      return;
+    }
+
+    const countRemoved = removeIngredientFromFormulas(key, item.nombre);
+    purgeIngredientFromDB(key, item.nombre);
+
+    persist();
+    persistPriceDB();
+    refreshAutocompleteLists();
+    closeModal("modal-eliminar-insumo");
+    renderIngredientsDB();
+    alert(`✓ Insumo quitado de ${countRemoved} fórmula(s) y eliminado definitivamente del catálogo.`);
+  }
 }
 
 // Exporta tabla de insumos lista para ERP / Excel en CSV estándar
