@@ -847,10 +847,12 @@ select.input{cursor:pointer;appearance:none;
       <h1>Catálogo de Insumos & Conexión ERP</h1>
       <p>Inventario de materias primas con códigos SKU listos para el ERP.</p>
     </div>
-    <div class="btn-row">
-      <button class="btn btn-erp" onclick="exportIngredientsJsonForERP()">⚡ Exportar a ERP (JSON)</button>
-      <button class="btn btn-ghost btn-sm" onclick="exportIngredientsCSV()">↓ Exportar CSV Estándar</button>
-      <button class="btn btn-accent btn-sm" onclick="sendIngredientsDirectToERP()">📡 Enviar a API ERP</button>
+    <div class="btn-row" style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-primary btn-sm" onclick="sendIngredientsDirectToERP()" id="btn-send-to-erp" title="FormuLab es la fuente de la verdad: Publica y sincroniza el catálogo maestro hacia el ERP en Modo Maestro">📡 Sincronizar hacia ERP (Modo Maestro)</button>
+      <button class="btn btn-erp btn-sm" onclick="exportIngredientsJsonForERP()" title="Descargar JSON maestro oficial para el ERP">⚡ Exportar a ERP (JSON)</button>
+      <button class="btn btn-ghost btn-sm" onclick="exportIngredientsCSV()" title="Descargar catálogo en CSV">↓ CSV</button>
+      <button class="btn btn-secondary btn-sm" onclick="syncIngredientsFromERP()" id="btn-sync-from-erp" title="Comparar o consultar catálogo de materias primas del ERP">🔄 Comparar con ERP</button>
+      <input type="file" id="import-erp-file" accept=".json,.csv" onchange="importIngredientsFromERPFile(event)" style="display:none">
     </div>
   </div>
   <!-- BANNER DE ALERTAS DE COMPRA Y REPOSICIÓN DE INSUMOS -->
@@ -1256,6 +1258,55 @@ select.input{cursor:pointer;appearance:none;
   </div>
 </div>
 
+<!-- MODAL: CONCILIACIÓN & IMPORTACIÓN ERP -->
+<div class="modal-backdrop" id="modal-reconcile-erp">
+  <div class="modal-box" style="max-width:740px">
+    <div class="modal-header">
+      <div>
+        <span class="modal-title">🔄 Conciliación de Insumos: FormuLab ⟷ ERP</span>
+        <div id="reconcile-subtitle" style="font-size:12px;color:var(--muted);margin-top:2px">Sincronización del catálogo maestro de materias primas</div>
+      </div>
+      <button class="modal-close" onclick="closeModal('modal-reconcile-erp')">✕</button>
+    </div>
+    <div class="modal-body">
+      <!-- Resumen en Cards -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));gap:10px;margin-bottom:16px">
+        <div style="background:var(--surface2);padding:10px;border-radius:8px;text-align:center">
+          <div style="font-size:11px;color:var(--muted);text-transform:uppercase">Enviados por ERP</div>
+          <div id="rec-total-erp" style="font-family:var(--fm);font-size:22px;color:var(--accent);font-weight:600">0</div>
+        </div>
+        <div style="background:var(--surface2);padding:10px;border-radius:8px;text-align:center">
+          <div style="font-size:11px;color:var(--muted);text-transform:uppercase">Actualizados</div>
+          <div id="rec-updated" style="font-family:var(--fm);font-size:22px;color:var(--ok);font-weight:600">0</div>
+        </div>
+        <div style="background:var(--surface2);padding:10px;border-radius:8px;text-align:center">
+          <div style="font-size:11px;color:var(--muted);text-transform:uppercase">Nuevos Creados</div>
+          <div id="rec-created" style="font-family:var(--fm);font-size:22px;color:var(--purple);font-weight:600">0</div>
+        </div>
+        <div style="background:var(--surface2);padding:10px;border-radius:8px;text-align:center">
+          <div style="font-size:11px;color:var(--muted);text-transform:uppercase">Total FormuLab</div>
+          <div id="rec-total-now" style="font-family:var(--fm);font-size:22px;color:var(--text);font-weight:600">0</div>
+        </div>
+      </div>
+
+      <div id="rec-feedback-banner" style="background:rgba(200,240,74,.08);border:1px solid var(--accent);border-radius:8px;padding:12px;margin-bottom:14px;font-size:13px"></div>
+
+      <!-- Pestañas de detalle -->
+      <div style="display:flex;gap:8px;margin-bottom:10px;border-bottom:1px solid var(--border);padding-bottom:6px">
+        <button class="btn btn-sm btn-primary" id="tab-btn-rec-created" onclick="switchReconcileTab('created')" style="font-weight:600">➕ Insumos Nuevos (<span id="rec-count-created-tab">0</span>)</button>
+        <button class="btn btn-sm btn-ghost" id="tab-btn-rec-unmatched" onclick="switchReconcileTab('unmatched')">⚠️ Solo en FormuLab (<span id="rec-count-unmatched-tab">0</span>)</button>
+      </div>
+
+      <div id="rec-tab-created" style="max-height:220px;overflow-y:auto;font-size:12px;border:1px solid var(--border);border-radius:6px;padding:8px"></div>
+      <div id="rec-tab-unmatched" style="display:none;max-height:220px;overflow-y:auto;font-size:12px;border:1px solid var(--border);border-radius:6px;padding:8px"></div>
+    </div>
+    <div class="modal-footer" style="display:flex;justify-content:space-between;align-items:center">
+      <span style="font-size:11px;color:var(--muted)">Sincronizado con Firebase Firestore & LocalStorage</span>
+      <button class="btn btn-primary" onclick="closeModal('modal-reconcile-erp')">✓ Listo, Ver Catálogo</button>
+    </div>
+  </div>
+</div>
+
 <!-- MODAL: LOTE -->
 <div class="modal-backdrop" id="modal-lote">
   <div class="modal-box" style="max-width:820px">
@@ -1487,14 +1538,13 @@ function generateSKU(nombre, fase){
 function toGramos(cant, unidad, dens){
   const c = parseFloat(cant) || 0;
   const d = (dens > 0) ? dens : 1.0;
-  const u = String(unidad || 'g').trim().toLowerCase();
-  switch(u){
+  switch(unidad){
     case 'kg': return c * 1000;
     case 'g':  return c;
     case 'mg': return c / 1000;
-    case 'l':  return c * 1000 * d;
-    case 'ml': return c * d;
-    case 'ul': return (c * d) / 1000;
+    case 'L':  return c * 1000 * d;
+    case 'mL': return c * d;
+    case 'uL': return (c * d) / 1000;
     default:   return c;
   }
 }
@@ -1502,14 +1552,13 @@ function toGramos(cant, unidad, dens){
 function fromGramos(gramos, unidad, dens){
   const g = parseFloat(gramos) || 0;
   const d = (dens > 0) ? dens : 1.0;
-  const u = String(unidad || 'g').trim().toLowerCase();
-  switch(u){
+  switch(unidad){
     case 'kg': return g / 1000;
     case 'g':  return g;
     case 'mg': return g * 1000;
-    case 'l':  return (g / d) / 1000;
-    case 'ml': return g / d;
-    case 'ul': return (g * 1000) / d;
+    case 'L':  return (g / d) / 1000;
+    case 'mL': return g / d;
+    case 'uL': return (g / d) * 1000;
     default:   return g;
   }
 }
@@ -2142,9 +2191,13 @@ function exportIngredientsJsonForERP(){
   const payload = {
     company: "Frescura Natural Cosméticos",
     system: "FormuLab",
+    source: "FormuLab_Master",
+    mode: "replace",
+    sync_mode: "master",
     exported_at: new Date().toISOString(),
     total_items: items.length,
-    catalog: items
+    catalog: items,
+    raw_materials: items
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], {type:"application/json;charset=utf-8"});
   const a = document.createElement("a");
@@ -2232,8 +2285,10 @@ function saveErpConfig(){
 function loadErpConfigToUI(){
   const urlInput = document.getElementById("erp-api-url");
   const tokenInput = document.getElementById("erp-api-token");
-  if(urlInput) urlInput.value = localStorage.getItem("cosmolab_erp_url") || "";
-  if(tokenInput) tokenInput.value = localStorage.getItem("cosmolab_erp_token") || "";
+  const defaultUrl = "https://www.frescuranaturalcosmeticos.com/api/insumos.php";
+  const defaultToken = "FN-ERP-PUBLISH-2026";
+  if(urlInput) urlInput.value = localStorage.getItem("cosmolab_erp_url") || defaultUrl;
+  if(tokenInput) tokenInput.value = localStorage.getItem("cosmolab_erp_token") || defaultToken;
 }
 
 async function testErpConnection(){
@@ -2278,7 +2333,8 @@ async function sendIngredientsDirectToERP(){
     density_g_ml: r.densidadMP ? Number(r.densidadMP) : (getPreloadedDensity(r.nombre, r.inci) || 1.0),
     suppliers: [...r.proveedores],
     last_unit_cost: (r.precio!==null&&r.precio!==undefined) ? Number(r.precio) : null,
-    cost_unit: r.unidad || "g"
+    cost_unit: r.unidad || "g",
+    phase_default: r.fase || ""
   }));
   try{
     const res = await fetch(url, {
@@ -2287,15 +2343,344 @@ async function sendIngredientsDirectToERP(){
         "Content-Type": "application/json",
         ...(token ? { "Authorization": token.startsWith("Bearer ") ? token : `Bearer ${token}` } : {})
       },
-      body: JSON.stringify({ raw_materials: items, source: "FormuLab", sync_date: new Date().toISOString() })
+      body: JSON.stringify({
+        raw_materials: items,
+        catalog: items,
+        mode: "replace",
+        sync_mode: "master",
+        source: "FormuLab_Master",
+        sync_date: new Date().toISOString()
+      })
     });
     if(res.ok){
-      alert(`✓ ¡Sincronización exitosa! ${items.length} insumos enviados al ERP.`);
+      const data = await res.json().catch(() => ({}));
+      alert(`✓ ¡Sincronización Maestra Exitosa!\n\nFormuLab envió sus ${items.length} materias primas oficiales al ERP en Modo Maestro.\n${data.message || 'El catálogo del ERP ha sido actualizado como reflejo exacto de FormuLab.'}`);
     } else {
       alert(`⚠ El ERP devolvió error HTTP ${res.status}.`);
     }
   }catch(err){
     alert(`⚠ Error al contactar con el ERP: ${err.message}. Si el ERP no permite llamadas desde el navegador (CORS), puedes usar la descarga JSON.`);
+  }
+}
+
+// ── Sincronizar Insumos desde la API del ERP ──
+async function syncIngredientsFromERP(){
+  const btn = document.getElementById("btn-sync-from-erp");
+  if(btn){ btn.disabled = true; btn.textContent = "⏳ Conectando al ERP..."; }
+  const url = localStorage.getItem("cosmolab_erp_url") || "https://www.frescuranaturalcosmeticos.com/api/insumos.php";
+  const token = localStorage.getItem("cosmolab_erp_token") || "FN-ERP-PUBLISH-2026";
+  try{
+    const res = await fetch(url, {
+      method: "GET",
+      headers: {
+        "Accept": "application/json",
+        ...(token ? { "Authorization": token.startsWith("Bearer ") ? token : `Bearer ${token}` } : {})
+      }
+    });
+    if(!res.ok) throw new Error(`HTTP ${res.status} (${res.statusText})`);
+    const data = await res.json();
+    const rawList = data.raw_materials || data.insumos || (Array.isArray(data) ? data : []);
+    if(!rawList.length){
+      alert("La API del ERP respondió, pero no devolvió ninguna materia prima en el listado.");
+      return;
+    }
+    processERPInsumosImport(rawList, "API ERP (" + url + ")");
+  }catch(err){
+    console.warn("No se pudo conectar a la API del ERP directamente:", err);
+    if(confirm(`No se pudo conectar automáticamente con la API del ERP (${err.message}).\n\n¿Deseas seleccionar el archivo JSON o CSV exportado desde tu ERP para cargarlo manualmente?`)){
+      document.getElementById("import-erp-file")?.click();
+    }
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = "🔄 Traer desde ERP (API)"; }
+  }
+}
+
+// ── Importar archivo JSON o CSV del ERP ──
+function importIngredientsFromERPFile(event){
+  const file = event.target.files?.[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const text = e.target.result;
+    try {
+      if(file.name.toLowerCase().endsWith(".json") || text.trim().startsWith("{") || text.trim().startsWith("[")){
+        const parsed = JSON.parse(text);
+        const list = parsed.raw_materials || parsed.insumos || parsed.materials || (Array.isArray(parsed) ? parsed : []);
+        if(!list.length) throw new Error("El archivo JSON no contiene una lista de materias primas reconocida.");
+        processERPInsumosImport(list, file.name);
+      } else {
+        const list = parseInsumosCSV(text);
+        if(!list.length) throw new Error("No se detectaron filas válidas en el archivo CSV.");
+        processERPInsumosImport(list, file.name);
+      }
+    }catch(err){
+      alert("Error procesando el archivo del ERP: " + err.message);
+    }
+    event.target.value = "";
+  };
+  reader.readAsText(file, "UTF-8");
+}
+
+// ── Parser de CSV compatible con comillas y delimitadores estándar ──
+function parseInsumosCSV(text){
+  const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
+  if(lines.length < 2) return [];
+
+  const parseLine = (line) => {
+    const res = [];
+    let cur = "";
+    let inQuote = false;
+    for(let i=0; i<line.length; i++){
+      const c = line[i];
+      if(c === '"'){
+        if(inQuote && line[i+1] === '"'){ cur += '"'; i++; }
+        else { inQuote = !inQuote; }
+      } else if((c === ',' || c === ';') && !inQuote){
+        res.push(cur.trim());
+        cur = "";
+      } else {
+        cur += c;
+      }
+    }
+    res.push(cur.trim());
+    return res;
+  };
+
+  const headers = parseLine(lines[0]).map(h => h.replace(/^["']|["']$/g, '').trim());
+  const items = [];
+
+  for(let i=1; i<lines.length; i++){
+    const cols = parseLine(lines[i]);
+    if(!cols.length || (cols.length === 1 && !cols[0])) continue;
+    const obj = {};
+    headers.forEach((h, idx) => {
+      obj[h] = cols[idx] !== undefined ? cols[idx].replace(/^["']|["']$/g, '').trim() : "";
+    });
+    items.push(obj);
+  }
+  return items;
+}
+
+// ── Motor de Conciliación y Fusión Inteligente ERP ⟷ FormuLab ──
+function processERPInsumosImport(rawList, sourceName){
+  if(!Array.isArray(rawList) || rawList.length === 0){
+    alert("No se encontraron registros de materias primas en el listado.");
+    return;
+  }
+
+  const idx = buildIngredientsIndex();
+  const existingBySku = new Map();
+  const existingByName = new Map();
+  const existingByInci = new Map();
+
+  Object.entries(idx).forEach(([key, r]) => {
+    if(r.sku) existingBySku.set(String(r.sku).trim().toUpperCase(), { key, item: r });
+    if(r.nombre) existingByName.set(priceKey(r.nombre), { key, item: r });
+    if(r.inci) existingByInci.set(priceKey(r.inci), { key, item: r });
+  });
+
+  const totalBefore = Object.keys(idx).length;
+  let updatedCount = 0;
+  let createdCount = 0;
+  const createdItems = [];
+  const updatedItems = [];
+  const processedKeys = new Set();
+
+  rawList.forEach(raw => {
+    if(!raw || typeof raw !== "object") return;
+
+    // Normalizar campos del ERP
+    const sku = String(raw.sku || raw.SKU || "").trim();
+    const nombre = String(raw.commercial_name || raw.nombre || raw["Nombre Comercial"] || raw.name || "").trim();
+    const inci = String(raw.inci_name || raw.inci || raw["Nombre INCI"] || "").trim();
+    const fase = String(raw.phase_default || raw.fase || raw["Fase"] || "").trim();
+    
+    let densidad = parseFloat(raw.density_g_ml ?? raw.densidad ?? raw["Densidad (g/mL)"]);
+    if(isNaN(densidad) || densidad <= 0) densidad = getPreloadedDensity(nombre, inci) || null;
+
+    let precio = parseFloat(raw.last_unit_cost ?? raw.precio ?? raw["Último Costo"]);
+    if(isNaN(precio) || precio < 0) precio = null;
+
+    const unidadCosto = String(raw.cost_unit || raw.unidad || raw["Unidad"] || "g").trim();
+
+    let prov = "";
+    if(Array.isArray(raw.suppliers)){
+      prov = raw.suppliers.filter(Boolean).join(", ");
+    } else if(raw.suppliers || raw.proveedores || raw.proveedor || raw["Proveedores"]){
+      prov = String(raw.suppliers || raw.proveedores || raw.proveedor || raw["Proveedores"]).trim();
+    }
+
+    let stock = parseFloat(raw.stock ?? raw["Stock Actual"] ?? raw["Stock"]);
+    if(isNaN(stock)) stock = null;
+
+    let stockMin = parseFloat(raw.stock_min ?? raw.stockMin ?? raw["Stock Mínimo"] ?? raw["Stock Minimo"]);
+    if(isNaN(stockMin)) stockMin = null;
+
+    const unidadStock = String(raw.stock_unit || raw.unidadStock || raw["Unidad Stock"] || unidadCosto || "g").trim();
+
+    if(!nombre && !sku) return;
+
+    // 1. Vincular por SKU, Nombre o INCI
+    let match = null;
+    if(sku && existingBySku.has(sku.toUpperCase())){
+      match = existingBySku.get(sku.toUpperCase());
+    } else if(nombre && existingByName.has(priceKey(nombre))){
+      match = existingByName.get(priceKey(nombre));
+    } else if(inci && existingByInci.has(priceKey(inci))){
+      match = existingByInci.get(priceKey(inci));
+    }
+
+    if(match){
+      const k = match.key;
+      processedKeys.add(k);
+      const ex = priceDB[k] || {};
+
+      const finalNombre = nombre || ex.nombre || match.item.nombre;
+      const finalInci = inci || ex.inci || match.item.inci || "";
+      const finalSku = sku || ex.sku || match.item.sku || generateSKU(finalNombre, fase);
+      const finalFase = fase || ex.fase || match.item.fase || "";
+      const finalDens = (densidad > 0) ? densidad : (ex.densidadMP || match.item.densidadMP);
+      const finalPrecio = (precio !== null) ? precio : (ex.precio !== undefined ? ex.precio : match.item.precio);
+      const finalUnidad = unidadCosto || ex.unidadCosto || match.item.unidad || "g";
+      const finalProv = prov || ex.proveedor || [...match.item.proveedores][0] || "";
+      const finalStock = (stock !== null) ? stock : (ex.stock !== undefined ? ex.stock : match.item.stock);
+      const finalStockMin = (stockMin !== null) ? stockMin : (ex.stockMin !== undefined ? ex.stockMin : match.item.stockMin);
+      const finalUStock = unidadStock || ex.unidadStock || match.item.unidadStock || "g";
+
+      rememberPrice(
+        finalNombre, finalInci, finalPrecio, finalUnidad, finalDens,
+        finalProv, finalFase, finalSku, finalStock, finalStockMin, finalUStock
+      );
+      updatedCount++;
+      updatedItems.push({ sku: finalSku, nombre: finalNombre, inci: finalInci, stock: finalStock, uStock: finalUStock });
+    } else {
+      // Insumo nuevo traído desde el ERP
+      const finalNombre = nombre || (sku ? ("Insumo " + sku) : "Insumo Nuevo");
+      const finalSku = sku || generateSKU(finalNombre, fase);
+      const finalStock = (stock !== null) ? stock : 0;
+      const finalStockMin = (stockMin !== null) ? stockMin : 0;
+
+      rememberPrice(
+        finalNombre, inci, precio, unidadCosto, densidad,
+        prov, fase, finalSku, finalStock, finalStockMin, unidadStock
+      );
+      createdCount++;
+      createdItems.push({ sku: finalSku, nombre: finalNombre, inci: inci, stock: finalStock, uStock: unidadStock });
+      processedKeys.add(priceKey(finalNombre));
+    }
+  });
+
+  persist();
+  persistPriceDB();
+  renderIngredientsDB();
+
+  // Insumos que solo existían en FormuLab (no vinieron en el catálogo del ERP)
+  const onlyInFormulab = Object.entries(idx)
+    .filter(([key]) => !processedKeys.has(key))
+    .map(([key, r]) => ({ key, sku: r.sku, nombre: r.nombre, inci: r.inci, formulas: [...r.formulas] }));
+
+  const totalAfter = Object.keys(buildIngredientsIndex()).length;
+
+  showReconciliationModal({
+    sourceName: sourceName || "ERP Frescura Natural",
+    totalReceived: rawList.length,
+    totalBefore,
+    updatedCount,
+    createdCount,
+    totalAfter,
+    createdItems,
+    updatedItems,
+    onlyInFormulab
+  });
+}
+
+function showReconciliationModal(data){
+  document.getElementById("rec-total-erp").textContent = data.totalReceived;
+  document.getElementById("rec-updated").textContent = data.updatedCount;
+  document.getElementById("rec-created").textContent = data.createdCount;
+  document.getElementById("rec-total-now").textContent = data.totalAfter;
+  document.getElementById("reconcile-subtitle").textContent = "Origen: " + data.sourceName;
+
+  const banner = document.getElementById("rec-feedback-banner");
+  if(banner){
+    banner.innerHTML = `<strong>✓ ¡Sincronización completada exitosamente!</strong><br>
+    Se analizaron <strong>${data.totalReceived}</strong> insumos del ERP. Se vincularon y actualizaron <strong>${data.updatedCount}</strong> insumos existentes y se crearon <strong>${data.createdCount}</strong> materias primas nuevas en FormuLab. Ahora tu laboratorio cuenta con <strong>${data.totalAfter}</strong> insumos sincronizados listos para formular.`;
+  }
+
+  // Render tab created
+  const createdEl = document.getElementById("rec-tab-created");
+  document.getElementById("rec-count-created-tab").textContent = data.createdItems.length;
+  if(!data.createdItems.length){
+    createdEl.innerHTML = `<div style="color:var(--muted);padding:8px">No se crearon insumos nuevos (todos los insumos ya existían en FormuLab).</div>`;
+  } else {
+    createdEl.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:11px">
+      <thead><tr style="color:var(--muted);text-align:left;border-bottom:1px solid var(--border)">
+        <th style="padding:4px">SKU</th>
+        <th style="padding:4px">Materia Prima</th>
+        <th style="padding:4px">INCI</th>
+        <th style="padding:4px;text-align:right">Stock Inicial</th>
+      </tr></thead>
+      <tbody>
+        ${data.createdItems.map(it => `
+          <tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:4px;font-family:var(--fm);color:var(--accent)">${esc(it.sku)}</td>
+            <td style="padding:4px;font-weight:600">${esc(it.nombre)}</td>
+            <td style="padding:4px;color:var(--muted)">${esc(it.inci || "—")}</td>
+            <td style="padding:4px;text-align:right;font-family:var(--fm)">${it.stock} ${esc(it.uStock)}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>`;
+  }
+
+  // Render tab unmatched
+  const unmatchedEl = document.getElementById("rec-tab-unmatched");
+  document.getElementById("rec-count-unmatched-tab").textContent = data.onlyInFormulab.length;
+  if(!data.onlyInFormulab.length){
+    unmatchedEl.innerHTML = `<div style="color:var(--ok);padding:8px">✓ ¡Conciliación perfecta! Todos los insumos de FormuLab coincidieron con el catálogo del ERP.</div>`;
+  } else {
+    unmatchedEl.innerHTML = `<div style="margin-bottom:8px;color:var(--muted)">Estos insumos están en tus fórmulas de FormuLab pero no vinieron en el catálogo del ERP (pueden ser ingredientes con ortografía alternativa):</div>
+    <table style="width:100%;border-collapse:collapse;font-size:11px">
+      <thead><tr style="color:var(--muted);text-align:left;border-bottom:1px solid var(--border)">
+        <th style="padding:4px">Insumo FormuLab</th>
+        <th style="padding:4px">INCI</th>
+        <th style="padding:4px">Fórmulas</th>
+        <th style="padding:4px;text-align:center">Acción</th>
+      </tr></thead>
+      <tbody>
+        ${data.onlyInFormulab.map(it => `
+          <tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:4px;font-weight:600">${esc(it.nombre)}</td>
+            <td style="padding:4px;color:var(--muted)">${esc(it.inci || "—")}</td>
+            <td style="padding:4px;font-size:10px">${it.formulas.length ? esc(it.formulas.join(", ")) : "—"}</td>
+            <td style="padding:4px;text-align:center">
+              <button class="btn btn-ghost btn-sm" onclick="renameIngredient('${esc(it.key)}')" title="Renombrar para que coincida con el ERP">✏️ Renombrar</button>
+            </td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>`;
+  }
+
+  switchReconcileTab('created');
+  openModal("modal-reconcile-erp");
+}
+
+function switchReconcileTab(tab){
+  const tCreated = document.getElementById("rec-tab-created");
+  const tUnmatched = document.getElementById("rec-tab-unmatched");
+  const bCreated = document.getElementById("tab-btn-rec-created");
+  const bUnmatched = document.getElementById("tab-btn-rec-unmatched");
+  if(tab === 'created'){
+    if(tCreated) tCreated.style.display = "block";
+    if(tUnmatched) tUnmatched.style.display = "none";
+    if(bCreated) { bCreated.classList.add("btn-primary"); bCreated.classList.remove("btn-ghost"); }
+    if(bUnmatched) { bUnmatched.classList.remove("btn-primary"); bUnmatched.classList.add("btn-ghost"); }
+  } else {
+    if(tCreated) tCreated.style.display = "none";
+    if(tUnmatched) tUnmatched.style.display = "block";
+    if(bCreated) { bCreated.classList.remove("btn-primary"); bCreated.classList.add("btn-ghost"); }
+    if(bUnmatched) { bUnmatched.classList.add("btn-primary"); bUnmatched.classList.remove("btn-ghost"); }
   }
 }
 
