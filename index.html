@@ -1754,18 +1754,58 @@ function persistPriceDB(){
 }
 // Clave normalizada para buscar coincidencias por nombre o INCI
 function priceKey(s){ return String(s||"").trim().toLowerCase(); }
+
+// Detecta y corrige entradas fantasma creadas sólo con el nombre INCI cuando ya existe el insumo comercial
+function repairGhostAliases(db){
+  if(!db || typeof db !== "object") return 0;
+  const inciToCanonKey = new Map();
+  Object.entries(db).forEach(([k, p]) => {
+    if(!p || typeof p !== "object" || p._isAlias) return;
+    const kNom = priceKey(p.nombre);
+    const kInci = priceKey(p.inci);
+    if(kNom && kInci && kNom !== kInci && k === kNom){
+      inciToCanonKey.set(kInci, kNom);
+    }
+  });
+
+  let repaired = 0;
+  Object.entries(db).forEach(([k, p]) => {
+    if(!p || typeof p !== "object") return;
+    const kNom = priceKey(p.nombre);
+    const kInci = priceKey(p.inci);
+    if(kInci && inciToCanonKey.has(kInci)){
+      const canonKey = inciToCanonKey.get(kInci);
+      if(k !== canonKey){
+        p._isAlias = true;
+        p.canonicalKey = canonKey;
+        const canon = db[canonKey];
+        if(canon && (!canon.stock || canon.stock === 0) && p.stock > 0){
+          canon.stock = p.stock;
+        }
+        repaired++;
+      }
+    }
+  });
+  return repaired;
+}
+
 // Arma la base de ingredientes: proveedor, último precio, fórmulas donde se usa
 function buildIngredientsIndex(){
   const idx = {}; // key -> {sku, nombre, inci, fase, proveedores:Set, precio, unidad, densidadMP, stock, stockMin, unidadStock, ts, formulas:Set}
+  const inciToCanonKey = new Map();
+
+  repairGhostAliases(priceDB);
 
   // 1. Cargar todos los insumos almacenados en priceDB (incluyendo los creados directamente en el catálogo)
   Object.keys(priceDB).forEach(k => {
     const p = priceDB[k];
     if(!p || typeof p !== "object") return;
+    if(p._isAlias) return; // 'p' es un alias secundario (ej. INCI), omitir para evitar duplicados o resurrección
     const nombre = (p.nombre || k).trim();
     if(!nombre) return;
     const key = priceKey(nombre);
-    if(k !== key) return; // 'k' es un alias secundario (ej. INCI), omitir para evitar duplicados o resurrección
+    if(k !== key) return; // 'k' no es la clave principal canónica
+
     if(!idx[key]){
       const provs = new Set(Array.isArray(p.proveedores) ? p.proveedores : (p.proveedor ? [p.proveedor] : []));
       idx[key] = {
@@ -1783,24 +1823,46 @@ function buildIngredientsIndex(){
         ts: p.ts || 0,
         formulas: new Set()
       };
+      if(p.inci) inciToCanonKey.set(priceKey(p.inci), key);
     } else {
       if(p.stock !== undefined && p.stock !== null && p.stock !== "") idx[key].stock = parseFloat(p.stock);
       if(p.stockMin !== undefined && p.stockMin !== null && p.stockMin !== "") idx[key].stockMin = parseFloat(p.stockMin);
       if(p.unidadStock) idx[key].unidadStock = p.unidadStock;
+      if(p.inci && !idx[key].inci) idx[key].inci = p.inci;
     }
   });
 
   // 2. Escanear todas las fórmulas para registrar fórmulas donde se usan y actualizar datos
   [...formulas].sort((a,b)=>(a.ts||0)-(b.ts||0)).forEach(f=>{
     (f.ingredientes||[]).forEach(i=>{
-      const key = priceKey(i.nombre||i.inci);
+      const kNom = priceKey(i.nombre);
+      const kInci = priceKey(i.inci);
+
+      // Resolución canónica: busca primero por nombre comercial, luego por INCI mapeado, luego por alias
+      let matchKey = (kNom && idx[kNom]) ? kNom : null;
+      if(!matchKey && kInci && inciToCanonKey.has(kInci)){
+        matchKey = inciToCanonKey.get(kInci);
+      }
+      if(!matchKey && kInci){
+        const found = Object.entries(idx).find(([_, r]) => r.inci && priceKey(r.inci) === kInci);
+        if(found) matchKey = found[0];
+      }
+      if(!matchKey && (kNom || kInci)){
+        const alias = (kNom ? priceDB[kNom] : null) || (kInci ? priceDB[kInci] : null);
+        if(alias && alias._isAlias && alias.canonicalKey && idx[alias.canonicalKey]){
+          matchKey = alias.canonicalKey;
+        }
+      }
+
+      const key = matchKey || kNom || kInci;
       if(!key) return;
+
       if(!idx[key]){
         idx[key] = {
           sku: generateSKU(i.nombre||i.inci, i.fase),
           nombre: (i.nombre||i.inci).trim(),
-          inci: "",
-          fase: "",
+          inci: i.inci || "",
+          fase: i.fase || "",
           proveedores: new Set(),
           precio: null,
           unidad: "g",
@@ -1811,12 +1873,13 @@ function buildIngredientsIndex(){
           ts: 0,
           formulas: new Set()
         };
+        if(i.inci) inciToCanonKey.set(priceKey(i.inci), key);
       }
       const e = idx[key];
       if(i.proveedor && i.proveedor.trim()) e.proveedores.add(i.proveedor.trim());
       if((f.ts||0) >= e.ts){
-        if(i.inci) e.inci = i.inci;
-        if(i.fase) e.fase = i.fase;
+        if(i.inci && !e.inci) e.inci = i.inci;
+        if(i.fase && !e.fase) e.fase = i.fase;
         if(i.precio !== undefined && i.precio !== null && i.precio !== ""){
           e.precio = parseFloat(i.precio);
           e.unidad = i.unidadCosto || "g";
@@ -2799,13 +2862,10 @@ async function testErpConnection(){
 }
 
 async function sendIngredientsDirectToERP(){
-  const url = localStorage.getItem("cosmolab_erp_url") || document.getElementById("erp-api-url")?.value.trim();
-  const token = localStorage.getItem("cosmolab_erp_token") || document.getElementById("erp-api-token")?.value.trim();
-  if(!url){
-    alert("Primero debes configurar la URL de tu ERP en 'Ajustes & Integraciones'.");
-    showView("settings");
-    return;
-  }
+  const defaultUrl = "https://www.frescuranaturalcosmeticos.com/api/insumos.php";
+  const defaultToken = "FN-ERP-PUBLISH-2026";
+  const url = localStorage.getItem("cosmolab_erp_url") || document.getElementById("erp-api-url")?.value.trim() || defaultUrl;
+  const token = localStorage.getItem("cosmolab_erp_token") || document.getElementById("erp-api-token")?.value.trim() || defaultToken;
   const idx = buildIngredientsIndex();
   const items = Object.values(idx).map(r => ({
     sku: r.sku,
@@ -3287,16 +3347,32 @@ Responde en español, corto y directo (máx. 4-5 líneas salvo que pidan más de
 
 
 // Registra/actualiza el precio y densidad de un ingrediente en la base global
-function rememberPrice(nombre, inci, precio, unidadCosto, densidadMP, proveedor, fase, customSKU, stock, stockMin, unidadStock){
-  const cleanNombre = (nombre || "").trim();
+function rememberPrice(nombre, inci, precio, unidadCosto, densidadMP, proveedor, fase, p8, p9, p10, p11){
+  let cleanNombre = (nombre || "").trim();
   const cleanInci = (inci || "").trim();
   if(!cleanNombre && !cleanInci) return;
 
-  const kNombre = priceKey(cleanNombre);
+  let kNombre = priceKey(cleanNombre);
   const kInci = priceKey(cleanInci);
+
+  // Si cleanNombre está vacío o es idéntico al INCI, buscar si ya existe un insumo canónico para este INCI
+  if((!cleanNombre || kNombre === kInci) && kInci){
+    const aliasOrCanon = priceDB[kInci];
+    if(aliasOrCanon){
+      const canonKey = aliasOrCanon.canonicalKey || (priceKey(aliasOrCanon.nombre) !== kInci ? priceKey(aliasOrCanon.nombre) : null);
+      if(canonKey && priceDB[canonKey]){
+        cleanNombre = priceDB[canonKey].nombre;
+        kNombre = priceKey(cleanNombre);
+      }
+    }
+  }
+
   const primaryKey = kNombre || kInci;
-  
-  const existing = priceDB[primaryKey] || (kInci ? priceDB[kInci] : null) || {};
+  const existing = (kNombre && priceDB[kNombre] && !priceDB[kNombre]._isAlias)
+    ? priceDB[kNombre]
+    : ((kInci && priceDB[kInci] && priceDB[kInci].canonicalKey && priceDB[priceDB[kInci].canonicalKey])
+      ? priceDB[priceDB[kInci].canonicalKey]
+      : (priceDB[primaryKey] || (kInci ? priceDB[kInci] : null) || {}));
   
   const dVal = (densidadMP !== undefined && densidadMP !== null && densidadMP !== "" && !isNaN(parseFloat(densidadMP)))
     ? parseFloat(densidadMP)
@@ -3304,6 +3380,11 @@ function rememberPrice(nombre, inci, precio, unidadCosto, densidadMP, proveedor,
     
   const provSet = new Set(Array.isArray(existing.proveedores) ? existing.proveedores : (existing.proveedor ? [existing.proveedor] : []));
   if(proveedor && proveedor.trim()) provSet.add(proveedor.trim());
+
+  let customSKU = (typeof p8 === "string" && isNaN(parseFloat(p8))) ? p8 : (typeof p10 === "string" ? p10 : "");
+  let stockVal = (p8 !== undefined && p8 !== null && p8 !== "" && !isNaN(parseFloat(p8))) ? parseFloat(p8) : (p9 !== undefined && p9 !== null && p9 !== "" && !isNaN(parseFloat(p9)) ? parseFloat(p9) : (existing.stock !== undefined ? existing.stock : 0));
+  let stockMinVal = (p9 !== undefined && p9 !== null && p9 !== "" && !isNaN(parseFloat(p9)) && p8 !== p9) ? parseFloat(p9) : (p10 !== undefined && p10 !== null && p10 !== "" && !isNaN(parseFloat(p10)) ? parseFloat(p10) : (existing.stockMin !== undefined ? existing.stockMin : 0));
+  let uStock = (typeof p11 === "string" && p11) ? p11 : (typeof p10 === "string" && isNaN(parseFloat(p10)) && p10 ? p10 : (existing.unidadStock || unidadCosto || "g"));
 
   const entry = {
     sku: customSKU || existing.sku || generateSKU(cleanNombre || cleanInci, fase || existing.fase),
@@ -3315,15 +3396,23 @@ function rememberPrice(nombre, inci, precio, unidadCosto, densidadMP, proveedor,
     precio: (precio !== undefined && precio !== null && precio !== "" && !isNaN(parseFloat(precio))) ? parseFloat(precio) : (existing.precio !== undefined ? existing.precio : null),
     unidadCosto: unidadCosto || existing.unidadCosto || "g",
     densidadMP: dVal,
-    stock: (stock !== undefined && stock !== null && stock !== "" && !isNaN(parseFloat(stock))) ? parseFloat(stock) : (existing.stock !== undefined ? existing.stock : 0),
-    stockMin: (stockMin !== undefined && stockMin !== null && stockMin !== "" && !isNaN(parseFloat(stockMin))) ? parseFloat(stockMin) : (existing.stockMin !== undefined ? existing.stockMin : 0),
-    unidadStock: unidadStock || existing.unidadStock || unidadCosto || "g",
+    stock: stockVal,
+    stockMin: stockMinVal,
+    unidadStock: uStock,
     ts: Date.now()
   };
 
   const targetEntry = Object.assign({}, existing, entry);
+  delete targetEntry._isAlias;
+  delete targetEntry.canonicalKey;
+
   if(kNombre) priceDB[kNombre] = targetEntry;
-  if(kInci && kInci !== kNombre) priceDB[kInci] = targetEntry;
+  if(kInci && kInci !== kNombre){
+    priceDB[kInci] = Object.assign({}, targetEntry, {
+      _isAlias: true,
+      canonicalKey: kNombre || primaryKey
+    });
+  }
   
   persistPriceDB();
 }
@@ -3683,7 +3772,10 @@ function openEditor(id){
   const tbody=document.getElementById("ing-tbody"); tbody.innerHTML="";
   (f?.ingredientes||[]).forEach(i=>addIngRow(i));
   // Autocompletar precios conocidos en filas que no traigan precio (ej. fórmulas importadas o antiguas)
-  document.querySelectorAll("#ing-tbody tr").forEach(tr=>autofillPrice(tr));
+  document.querySelectorAll("#ing-tbody tr").forEach(tr=>{
+    const pInput = tr.querySelectorAll("input")[4];
+    if(!pInput || !pInput.value) autofillPrice(tr);
+  });
   updatePct(); updateSaveBtn();
   const panel=document.getElementById("inci-display-panel");
   if(f?.ingredientes?.length){ renderInciPanel(f.ingredientes); panel.style.display="block"; }
@@ -3729,9 +3821,6 @@ function addIngRow(data){
     <td class="td-rm"><button class="btn-dsf" onclick="removeIngRow(this)">✕</button></td>`;
   document.getElementById("ing-tbody").appendChild(tr);
   updateCosts();
-  if(data?.nombre || data?.inci){
-    rememberPrice(data.nombre, data.inci, data.precio, data.unidadCosto, data.densidadMP, data.proveedor, data.fase);
-  }
 }
 
 let __autofillTimer = null;
@@ -3754,26 +3843,39 @@ function autofillPrice(tr){
   if(!nombre && !inciInput?.value.trim()) return;
 
   const idx = buildIngredientsIndex();
-  const found = idx[priceKey(nombre || inciInput?.value)];
+  let found = null;
+  if(nombre) found = idx[priceKey(nombre)];
+  if(!found && inciInput?.value){
+    const kInci = priceKey(inciInput.value);
+    found = Object.values(idx).find(r => r.inci && priceKey(r.inci) === kInci);
+  }
+  if(!found){
+    const lookup = lookupPrice(nombre, inciInput?.value);
+    if(lookup && !lookup._isAlias) found = lookup;
+  }
+
   if(found){
+    if(inputs[0] && !inputs[0].value && found.nombre) inputs[0].value = found.nombre;
     if(inciInput && !inciInput.value && found.inci) inciInput.value = found.inci;
-    if(provInput && !provInput.value && found.proveedor) provInput.value = found.proveedor;
+    if(provInput && !provInput.value && (found.proveedor || (found.proveedores && [...found.proveedores][0]))) {
+      provInput.value = found.proveedor || [...found.proveedores][0];
+    }
     if(faseSel && !faseSel.value && found.fase) faseSel.value = found.fase;
     if(precioInput && !precioInput.value && found.precio !== null && found.precio !== undefined){
       precioInput.value = found.precio;
-      if(unidadSel) unidadSel.value = found.unidad||"g";
+      if(unidadSel) unidadSel.value = found.unidad || "g";
     }
     if(densInput && !densInput.value && found.densidadMP){
       densInput.value = found.densidadMP;
     }
   }
   if(densInput && !densInput.value){
-    const pre = getPreloadedDensity(nombre, inciInput?.value);
+    const pre = getPreloadedDensity(inputs[0]?.value.trim() || nombre, inciInput?.value);
     if(pre) densInput.value = pre;
   }
-  // Registrar de una vez en el Catálogo de Insumos si es nuevo o trae datos
+  // Registrar de una vez en el Catálogo de Insumos con resolución canónica
   rememberPrice(
-    nombre,
+    inputs[0]?.value.trim() || nombre,
     inciInput?.value,
     precioInput?.value,
     unidadSel?.value || "g",
@@ -3996,7 +4098,7 @@ function computeCostSnapshot(){
 // ═══════════════════════════════════════════════
 // SAVE FORMULA
 // ═══════════════════════════════════════════════
-function duplicateFormula(id){
+async function duplicateFormula(id){
   const src = formulas.find(f=>String(f.id)===String(id));
   if(!src) return;
   const copy = JSON.parse(JSON.stringify(src));
@@ -4009,6 +4111,7 @@ function duplicateFormula(id){
   copy.tsUpdated = Date.now();
   formulas.unshift(copy);
   persist();
+  if(window.__forceFirestoreSyncNow) await window.__forceFirestoreSyncNow();
   showView("editor");
   openEditor(copy.id);
   editingId = copy.id;
@@ -4054,7 +4157,7 @@ function buildFormulaFromEditor(existing, opts){
   };
 }
 
-function saveFormula(){
+async function saveFormula(){
   clearTimeout(autosaveTimer);
   const nombreInput = document.getElementById("f-nombre");
   const nombre = nombreInput ? nombreInput.value.trim() : "";
@@ -4074,7 +4177,7 @@ function saveFormula(){
     formulas.unshift(f);
   }
   
-  // Registrar de forma garantizada todos los insumos en el Catálogo de Insumos
+  // Registrar de forma garantizada todos los insumos en el Catálogo de Insumos con resolución canónica
   (f.ingredientes || []).forEach(i => {
     if(i.nombre || i.inci){
       rememberPrice(i.nombre, i.inci, i.precio, i.unidadCosto, i.densidadMP, i.proveedor, i.fase);
@@ -4084,6 +4187,7 @@ function saveFormula(){
   persist();
   editingId = null;
   showView("home");
+  if(window.__forceFirestoreSyncNow) await window.__forceFirestoreSyncNow();
 }
 
 // ═══════════════════════════════════════════════
@@ -5421,6 +5525,21 @@ persist(); renderCards(); checkApiBanner(); renderKeyStatus();
     el.style.color = cls==="err" ? "#ff6b6b" : cls==="ok" ? "#7dde52" : "var(--muted)";
   }
 
+  // Sanitizador recursivo para asegurar que Firestore nunca rechace datos por 'undefined', 'NaN' o 'Infinity'
+  function cleanForFirestore(obj){
+    if(obj === undefined) return null;
+    if(typeof obj === "number" && (Number.isNaN(obj) || !Number.isFinite(obj))) return null;
+    if(obj === null || typeof obj !== "object") return obj;
+    if(Array.isArray(obj)) return obj.map(cleanForFirestore);
+    const out = {};
+    for(const [k, v] of Object.entries(obj)){
+      if(v !== undefined){
+        out[k] = cleanForFirestore(v);
+      }
+    }
+    return out;
+  }
+
   function scheduleFirestoreSync(){
     if(applyingRemote) return; // evita loop justo después de aplicar datos remotos
     const user = auth.currentUser;
@@ -5435,7 +5554,9 @@ persist(); renderCards(); checkApiBanner(); renderKeyStatus();
     syncTimer = setTimeout(async () => {
       try{
         await setDoc(doc(db, "users", user.uid), {
-          formulas, categories, priceDB,
+          formulas: cleanForFirestore(formulas),
+          categories: cleanForFirestore(categories),
+          priceDB: cleanForFirestore(priceDB),
           updatedAt: serverTimestamp()
         });
         lastRemoteFormulaCount = formulas.length;
@@ -5449,8 +5570,7 @@ persist(); renderCards(); checkApiBanner(); renderKeyStatus();
   }
   window.__scheduleFirestoreSync = scheduleFirestoreSync;
 
-  // Guardado inmediato, sin espera de 1.2s — para acciones deliberadas de un clic
-  // (unificar/eliminar ingredientes) donde el usuario podría cerrar la pestaña enseguida.
+  // Guardado inmediato, sin espera de 1.2s — para acciones deliberadas (guardar, duplicar, unificar, eliminar)
   async function forceFirestoreSyncNow(){
     const user = auth.currentUser;
     if(!user) return false;
@@ -5458,7 +5578,9 @@ persist(); renderCards(); checkApiBanner(); renderKeyStatus();
     setSaveStatus("Guardando…", "");
     try{
       await setDoc(doc(db, "users", user.uid), {
-        formulas, categories, priceDB,
+        formulas: cleanForFirestore(formulas),
+        categories: cleanForFirestore(categories),
+        priceDB: cleanForFirestore(priceDB),
         updatedAt: serverTimestamp()
       });
       lastRemoteFormulaCount = formulas.length;
@@ -5483,13 +5605,49 @@ persist(); renderCards(); checkApiBanner(); renderKeyStatus();
     applyingRemote = true;
     if(snap.exists()){
       const data = snap.data();
-      formulas   = data.formulas   || [];
-      categories = data.categories || [];
-      priceDB    = data.priceDB    || {};
+      const remoteFormulas = data.formulas || [];
+      const remoteCats = data.categories || [];
+      const remotePriceDB = data.priceDB || {};
+
+      // Smart Merge formulas: nunca destruir fórmulas locales más recientes o no sincronizadas
+      const remoteMap = new Map(remoteFormulas.map(f => [String(f.id), f]));
+      let hadLocalNewer = false;
+
+      formulas.forEach(localF => {
+        if(!localF || !localF.id) return;
+        const remoteF = remoteMap.get(String(localF.id));
+        if(!remoteF){
+          remoteMap.set(String(localF.id), localF);
+          hadLocalNewer = true;
+        } else {
+          const localTs = localF.tsUpdated || localF.ts || 0;
+          const remoteTs = remoteF.tsUpdated || remoteF.ts || 0;
+          if(localTs > remoteTs){
+            remoteMap.set(String(localF.id), localF);
+            hadLocalNewer = true;
+          }
+        }
+      });
+
+      formulas = Array.from(remoteMap.values());
+      categories = remoteCats.length ? remoteCats : categories;
+      priceDB = Object.assign({}, remotePriceDB, priceDB);
+      repairGhostAliases(priceDB);
+
       lastRemoteFormulaCount = formulas.length;
+
+      if(hadLocalNewer){
+        console.log("Preservadas fórmulas locales más recientes tras refresco. Sincronizando con la nube...");
+        scheduleFirestoreSync();
+      }
     } else {
-      // Primer login: sube lo que haya en este dispositivo como base inicial
-      await setDoc(ref, { formulas, categories, priceDB, updatedAt: serverTimestamp() });
+      repairGhostAliases(priceDB);
+      await setDoc(ref, {
+        formulas: cleanForFirestore(formulas),
+        categories: cleanForFirestore(categories),
+        priceDB: cleanForFirestore(priceDB),
+        updatedAt: serverTimestamp()
+      });
       lastRemoteFormulaCount = formulas.length;
     }
     persist();      // refresca localStorage (cache offline) + stats + sidebar
