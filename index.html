@@ -879,7 +879,8 @@ select.input{cursor:pointer;appearance:none;
         <option value="ok">✓ Stock Suficiente</option>
       </select>
     </div>
-    <div style="display:flex;gap:8px;align-items:center">
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <button class="btn btn-secondary btn-sm" onclick="syncAllIngredientPricesToFormulas()" title="Actualiza y recalcula todas las fórmulas con los últimos precios registrados en el catálogo">🔄 Sincronizar Precios a Fórmulas</button>
       <button class="btn btn-primary btn-sm" onclick="openModalNuevoInsumo()">+ Nuevo Insumo</button>
       <button class="btn btn-ghost btn-sm" id="ingdb-merge-btn" onclick="mergeSelectedIngredients()" style="display:none">🔗 Unificar seleccionados</button>
     </div>
@@ -1155,6 +1156,7 @@ select.input{cursor:pointer;appearance:none;
           </select>
         </div>
       </div>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px">💡 Al guardar un nuevo precio, se actualizará automáticamente en todas las fórmulas que contienen este insumo y se recalcularán sus costos.</div>
 
       <!-- INVENTARIO EN ALMACÉN -->
       <div class="g3" style="margin-top:10px;background:var(--surface2);padding:10px;border-radius:8px">
@@ -1242,6 +1244,7 @@ select.input{cursor:pointer;appearance:none;
       <div style="margin-top:10px">
         <label class="fl">Nuevo Costo Unitario de Compra (Opcional)</label>
         <input class="input" type="number" id="stock-adjust-price" step="any" min="0" placeholder="Dejar en blanco para conservar costo actual" style="font-family:var(--fm)">
+        <div style="font-size:11px;color:var(--muted);margin-top:2px">💡 Si ingresas un nuevo costo de compra, se actualizará en las fórmulas que usan esta materia prima.</div>
       </div>
 
       <div style="margin-top:10px">
@@ -2083,7 +2086,190 @@ function openModalEditarInsumo(key){
   openModal("modal-insumo");
 }
 
-function guardarInsumoModal(){
+// ── Recalcular Costos y Precios de una Fórmula (en memoria) ──
+function recalculateFormulaCosts(f){
+  if(!f || !Array.isArray(f.ingredientes)) return;
+  const loteRef = parseFloat(f.loteRef) || 1000;
+  const overhead = (parseFloat(f.overhead) || 0) / 100;
+  const margen = (parseFloat(f.margen) || 0) / 100;
+  const fDensidad = parseFloat(f.densidad) || 1.0;
+
+  let totalCostoMP = 0;
+  let hasAnyCost = false;
+
+  f.ingredientes.forEach(i => {
+    const pct = parseFloat(i.porcentaje) || 0;
+    const precio = parseFloat(i.precio) || 0;
+    const unidad = i.unidadCosto || "g";
+    const dMP = parseFloat(i.densidadMP) || getPreloadedDensity(i.nombre, i.inci) || fDensidad;
+    if(precio > 0 && pct > 0){
+      hasAnyCost = true;
+      totalCostoMP += ((pct / 100) * loteRef) * costoAGramo(precio, unidad, dMP);
+    }
+  });
+
+  const otherTotal = (f.otrosCostos || []).reduce((s, o) => s + (parseFloat(o.valor) || 0), 0);
+  if(otherTotal > 0) hasAnyCost = true;
+
+  if(!hasAnyCost){
+    f.costoPer100 = null;
+    f.pvpPer100 = null;
+    if(Array.isArray(f.presentaciones)){
+      f.presentaciones.forEach(p => { p.costo = null; p.pvp = null; });
+    }
+    return;
+  }
+
+  const costoMPconOH = totalCostoMP * (1 + overhead);
+  const costoConOH = Math.round(costoMPconOH + otherTotal);
+  const costo100 = Math.round((costoConOH / loteRef) * 100);
+  const pvp100 = margen < 1 ? Math.round(costo100 / (1 - margen)) : costo100;
+
+  f.costoPer100 = costo100;
+  f.pvpPer100 = pvp100;
+
+  const toGrams = { g: 1, oz: 28.35, kg: 1000, mL: fDensidad, L: 1000 * fDensidad };
+  const costoPorG = costoConOH / loteRef;
+
+  if(Array.isArray(f.presentaciones)){
+    f.presentaciones = f.presentaciones.map(p => {
+      const cant = parseFloat(p.cantidad) || 0;
+      const factor = toGrams[p.unidad] || 1;
+      const c = Math.round(costoPorG * cant * factor);
+      const v = margen < 1 ? Math.round(c / (1 - margen)) : c;
+      return {
+        ...p,
+        costo: c,
+        pvp: v
+      };
+    });
+  }
+}
+
+// ── Propagación Automática de Precios hacia Fórmulas ──
+function propagateIngredientPriceToFormulas(rawKey, newPrice, newUnit, newDensity, optInci, optNombre){
+  const kTarget = priceKey(rawKey);
+  const nTarget = optNombre ? priceKey(optNombre) : "";
+  const iTarget = optInci ? priceKey(optInci) : "";
+
+  const matchKeys = new Set();
+  if(kTarget) matchKeys.add(kTarget);
+  if(nTarget) matchKeys.add(nTarget);
+  if(iTarget) matchKeys.add(iTarget);
+
+  const entry = priceDB[kTarget] || (nTarget ? priceDB[nTarget] : null) || (iTarget ? priceDB[iTarget] : null);
+  if(entry){
+    if(entry.nombre) matchKeys.add(priceKey(entry.nombre));
+    if(entry.inci) matchKeys.add(priceKey(entry.inci));
+    if(entry.canonicalKey) matchKeys.add(priceKey(entry.canonicalKey));
+  }
+
+  const numPrice = (newPrice !== null && newPrice !== undefined && newPrice !== "" && !isNaN(parseFloat(newPrice)))
+    ? parseFloat(newPrice)
+    : null;
+
+  let formulasUpdated = 0;
+  let rowsUpdated = 0;
+
+  formulas.forEach(f => {
+    let modified = false;
+    (f.ingredientes || []).forEach(i => {
+      const kNom = priceKey(i.nombre);
+      const kInci = priceKey(i.inci);
+
+      let isMatch = matchKeys.has(kNom) || (kInci && matchKeys.has(kInci));
+      if(!isMatch && kNom && priceDB[kNom]){
+        const p = priceDB[kNom];
+        if(p.canonicalKey && matchKeys.has(priceKey(p.canonicalKey))) isMatch = true;
+        if(p.nombre && matchKeys.has(priceKey(p.nombre))) isMatch = true;
+      }
+      if(!isMatch && kInci && priceDB[kInci]){
+        const p = priceDB[kInci];
+        if(p.canonicalKey && matchKeys.has(priceKey(p.canonicalKey))) isMatch = true;
+      }
+
+      if(isMatch){
+        const oldPrecio = (i.precio !== null && i.precio !== undefined && i.precio !== "") ? parseFloat(i.precio) : null;
+        const oldUnit = i.unidadCosto || "g";
+        const oldDens = (i.densidadMP !== undefined && i.densidadMP !== null && i.densidadMP !== "") ? parseFloat(i.densidadMP) : null;
+        const targetDens = (newDensity !== undefined && newDensity !== null && newDensity !== "" && !isNaN(parseFloat(newDensity))) ? parseFloat(newDensity) : null;
+
+        let needsChange = false;
+        if(numPrice !== null && oldPrecio !== numPrice) needsChange = true;
+        if(newUnit && oldUnit !== newUnit) needsChange = true;
+        if(targetDens !== null && oldDens !== targetDens) needsChange = true;
+
+        if(needsChange){
+          if(numPrice !== null) i.precio = String(numPrice);
+          if(newUnit) i.unidadCosto = newUnit;
+          if(targetDens !== null) i.densidadMP = targetDens;
+          modified = true;
+          rowsUpdated++;
+        }
+      }
+    });
+
+    if(modified){
+      recalculateFormulaCosts(f);
+      f.tsUpdated = Date.now();
+      formulasUpdated++;
+    }
+  });
+
+  // Si la fórmula activa en el editor fue modificada, actualizar visualmente sus filas en pantalla
+  if(editingId && document.getElementById("view-editor")?.classList.contains("active")){
+    document.querySelectorAll("#ing-tbody tr").forEach(tr => {
+      const inputs = tr.querySelectorAll("input");
+      const sels = tr.querySelectorAll("select");
+      const nom = priceKey(inputs[0]?.value);
+      const inci = priceKey(inputs[1]?.value);
+      if(matchKeys.has(nom) || (inci && matchKeys.has(inci))){
+        if(numPrice !== null && inputs[4]) inputs[4].value = numPrice;
+        if(newUnit && sels[1]) sels[1].value = newUnit;
+        if(newDensity && inputs[5]) inputs[5].value = newDensity;
+      }
+    });
+    if(typeof updateCosts === "function") updateCosts();
+  }
+
+  return { formulasUpdated, rowsUpdated };
+}
+
+// ── Sincronizar Todos los Precios del Catálogo hacia las Fórmulas ──
+async function syncAllIngredientPricesToFormulas(){
+  const idx = buildIngredientsIndex();
+  let totalFormulas = 0;
+  let totalRows = 0;
+
+  Object.values(idx).forEach(item => {
+    if(item.precio !== null && item.precio !== undefined && !isNaN(item.precio)){
+      const res = propagateIngredientPriceToFormulas(
+        item.nombre,
+        item.precio,
+        item.unidad,
+        item.densidadMP,
+        item.inci,
+        item.nombre
+      );
+      if(res.formulasUpdated > 0){
+        totalFormulas += res.formulasUpdated;
+        totalRows += res.rowsUpdated;
+      }
+    }
+  });
+
+  persist();
+  if(typeof renderCards === "function") renderCards();
+  if(window.__forceFirestoreSyncNow) await window.__forceFirestoreSyncNow();
+
+  if(totalFormulas > 0){
+    alert(`✓ ¡Sincronización completada exitosamente!\nSe actualizaron y recalcularon los costos en ${totalFormulas} fórmula(s) (${totalRows} ingredientes actualizados con los precios del catálogo).`);
+  } else {
+    alert("✓ Todas tus fórmulas ya cuentan con los precios más recientes del catálogo.");
+  }
+}
+
+async function guardarInsumoModal(){
   const errEl = document.getElementById("insumo-error-msg");
   if(errEl) errEl.style.display = "none";
   
@@ -2113,10 +2299,22 @@ function guardarInsumoModal(){
   }
   
   rememberPrice(nombre, inci, precio, unidad, dens, proveedor, fase, sku, stock, stockMin, unidadStock);
+  
+  // Propagación automática del nuevo precio hacia todas las fórmulas que usan este insumo
+  const propRes = propagateIngredientPriceToFormulas(editKey || nombre, precio, unidad, dens, inci, nombre);
+
+  persist();
   persistPriceDB();
   refreshAutocompleteLists();
   closeModal("modal-insumo");
   renderIngredientsDB();
+  if(typeof renderCards === "function") renderCards();
+
+  if(window.__forceFirestoreSyncNow) await window.__forceFirestoreSyncNow();
+
+  if(propRes.formulasUpdated > 0){
+    alert(`✓ Insumo guardado.\nSe actualizó automáticamente el precio en ${propRes.formulasUpdated} fórmula(s) (${propRes.rowsUpdated} ingrediente(s)) y se recalcularon sus costos.`);
+  }
 }
 
 // ── Modal de Ajuste Rápido de Stock (±) ──
@@ -2146,7 +2344,7 @@ function updateStockAdjustUI(){
   }
 }
 
-function guardarAjusteStockModal(){
+async function guardarAjusteStockModal(){
   const errEl = document.getElementById("stock-adjust-err");
   if(errEl) errEl.style.display = "none";
   const key = document.getElementById("stock-adjust-key").value;
@@ -2185,8 +2383,19 @@ function guardarAjusteStockModal(){
 
   p.stock = Math.round(finalStock * 1000) / 1000;
   p.unidadStock = uStock;
+  let priceUpdated = false;
   if(newPrice !== "" && !isNaN(parseFloat(newPrice))){
     p.precio = parseFloat(newPrice);
+    // Propagar precio nuevo ingresado en la compra hacia las fórmulas asociadas
+    const propRes = propagateIngredientPriceToFormulas(
+      key,
+      newPrice,
+      p.unidadCosto || item.unidad,
+      p.densidadMP || item.densidadMP,
+      item.inci,
+      item.nombre
+    );
+    priceUpdated = propRes.formulasUpdated > 0;
   }
   if(note){
     p.ultimoLoteCompra = note;
@@ -2206,9 +2415,16 @@ function guardarAjusteStockModal(){
     p.unidadStock
   );
 
+  persist();
   persistPriceDB();
   closeModal("modal-stock-insumo");
   renderIngredientsDB();
+  if(typeof renderCards === "function") renderCards();
+
+  if(window.__forceFirestoreSyncNow) await window.__forceFirestoreSyncNow();
+  if(priceUpdated){
+    console.log("Precio de insumo propagado exitosamente a las fórmulas.");
+  }
 }
 
 // ── Exportar Lista de Compras para Proveedores ──
@@ -3093,6 +3309,9 @@ function processERPInsumosImport(rawList, sourceName){
         finalNombre, finalInci, finalPrecio, finalUnidad, finalDens,
         finalProv, finalFase, finalSku, finalStock, finalStockMin, finalUStock
       );
+      if(finalPrecio !== null && finalPrecio !== undefined && !isNaN(parseFloat(finalPrecio))){
+        propagateIngredientPriceToFormulas(k, finalPrecio, finalUnidad, finalDens, finalInci, finalNombre);
+      }
       updatedCount++;
       updatedItems.push({ sku: finalSku, nombre: finalNombre, inci: finalInci, stock: finalStock, uStock: finalUStock });
     } else {
@@ -3106,6 +3325,9 @@ function processERPInsumosImport(rawList, sourceName){
         finalNombre, inci, precio, unidadCosto, densidad,
         prov, fase, finalSku, finalStock, finalStockMin, unidadStock
       );
+      if(precio !== null && precio !== undefined && !isNaN(parseFloat(precio))){
+        propagateIngredientPriceToFormulas(finalNombre, precio, unidadCosto, densidad, inci, finalNombre);
+      }
       createdCount++;
       createdItems.push({ sku: finalSku, nombre: finalNombre, inci: inci, stock: finalStock, uStock: unidadStock });
       processedKeys.add(priceKey(finalNombre));
@@ -3115,6 +3337,8 @@ function processERPInsumosImport(rawList, sourceName){
   persist();
   persistPriceDB();
   renderIngredientsDB();
+  if(typeof renderCards === "function") renderCards();
+  if(window.__forceFirestoreSyncNow) window.__forceFirestoreSyncNow();
 
   // Insumos que solo existían en FormuLab (no vinieron en el catálogo del ERP)
   const onlyInFormulab = Object.entries(idx)
