@@ -758,6 +758,7 @@ select.input{cursor:pointer;appearance:none;
 
     <div class="editor-footer" style="display:flex;align-items:center;gap:8px">
       <span id="autosave-indicator" style="font-size:11px;color:var(--muted);flex:1"></span>
+      <button class="btn btn-secondary btn-sm" onclick="downloadCurrentFormulaCSV()" title="Descargar fórmula (% con Nombre Comercial e INCI)">📥 Descargar fórmula (%)</button>
       <button class="btn btn-erp btn-sm" onclick="exportCurrentFormulaBOM()" title="Exportar Estructura / BOM para ERP">🏭 Exportar BOM para ERP</button>
       <button class="btn btn-ghost" onclick="cancelEdit()">Cancelar</button>
       <button class="btn btn-primary" id="btn-save" onclick="saveFormula()" disabled>Guardar fórmula</button>
@@ -3030,6 +3031,59 @@ function exportCurrentFormulaBOM(){
   }
 }
 
+// Descarga la fórmula en formato CSV conteniendo únicamente Nombre Comercial, INCI y Porcentaje (%)
+function downloadFormulaCSV(id){
+  const f = formulas.find(x => String(x.id) === String(id));
+  if(!f) return;
+  if(!f.ingredientes || !f.ingredientes.length){
+    alert("Esta fórmula no tiene ingredientes registrados para descargar.");
+    return;
+  }
+  const esc2 = s => `"${String(s ?? "").replace(/"/g, '""')}"`;
+  const header = ["Nombre Comercial", "INCI", "Porcentaje (%)"];
+  const lines = [header.join(",")];
+
+  let totalPct = 0;
+  (f.ingredientes || []).forEach(i => {
+    const pct = parseFloat(i.porcentaje) || 0;
+    totalPct += pct;
+    lines.push([
+      esc2(i.nombre || ""),
+      esc2(i.inci || ""),
+      pct
+    ].join(","));
+  });
+
+  lines.push([
+    esc2("Total"),
+    esc2(""),
+    Math.round(totalPct * 100) / 100
+  ].join(","));
+
+  const blob = new Blob(["\uFEFF" + lines.join("\n")], {type: "text/csv;charset=utf-8"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  const cleanName = (f.nombre || "formula").trim().toLowerCase().replace(/[^a-z0-9]+/gi, "_").replace(/_+/g, "_");
+  const ver = f.version ? `_${f.version}` : "";
+  a.download = `formula_${cleanName}${ver}.csv`;
+  a.click();
+}
+
+function downloadCurrentFormulaCSV(){
+  if(editingId){
+    downloadFormulaCSV(editingId);
+  } else {
+    const f = buildFormulaFromEditor(null, {});
+    if(!f.nombre){
+      alert("Por favor asigna un nombre a la fórmula antes de descargar.");
+      return;
+    }
+    formulas.unshift(f);
+    downloadFormulaCSV(f.id);
+    formulas.shift();
+  }
+}
+
 function saveErpConfig(){
   const url = document.getElementById("erp-api-url")?.value.trim() || "";
   const token = document.getElementById("erp-api-token")?.value.trim() || "";
@@ -3819,6 +3873,7 @@ function renderCards(){
         <span class="${pctCls}">${total.toFixed(2)}%</span>
       </div>
       <div class="card-actions">
+        <button class="btn btn-sm btn-primary" onclick="downloadFormulaCSV('${f.id}')" title="Descargar fórmula (% con Nombre Comercial e INCI)">📥 Descargar</button>
         <button class="btn btn-sm" onclick="openLote('${f.id}')">📦 Lote</button>
         <button class="btn btn-sm" onclick="openSim('${f.id}')">🔬 Simular</button>
         <button class="btn btn-sm btn-expert" onclick="openExperto('${f.id}')">✦ Experto</button>
