@@ -756,9 +756,10 @@ select.input{cursor:pointer;appearance:none;
       <button class="btn btn-ghost proc-add-btn btn-sm" onclick="addProcStep('','proc-steps-editor')">+ Agregar paso</button>
     </div>
 
-    <div class="editor-footer" style="display:flex;align-items:center;gap:8px">
+    <div class="editor-footer" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
       <span id="autosave-indicator" style="font-size:11px;color:var(--muted);flex:1"></span>
       <button class="btn btn-secondary btn-sm" onclick="downloadCurrentFormulaCSV()" title="Descargar fórmula (% con Nombre Comercial e INCI)">📥 Descargar fórmula (%)</button>
+      <button class="btn btn-ghost btn-sm" onclick="exportCurrentFormulaJSON()" title="Descargar esta fórmula completa en formato JSON">{ } Exportar JSON</button>
       <button class="btn btn-erp btn-sm" onclick="exportCurrentFormulaBOM()" title="Exportar Estructura / BOM para ERP">🏭 Exportar BOM para ERP</button>
       <button class="btn btn-ghost" onclick="cancelEdit()">Cancelar</button>
       <button class="btn btn-primary" id="btn-save" onclick="saveFormula()" disabled>Guardar fórmula</button>
@@ -3084,6 +3085,40 @@ function downloadCurrentFormulaCSV(){
   }
 }
 
+// Exporta una sola fórmula completa en formato JSON nativo de FormuLab
+function exportFormulaJSON(id){
+  const f = formulas.find(x => String(x.id) === String(id));
+  if(!f) return;
+  const payload = {
+    type: "formulab_formula",
+    version_format: "1.0",
+    exportedAt: new Date().toISOString(),
+    formula: f
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {type: "application/json;charset=utf-8"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  const cleanName = (f.nombre || "formula").trim().toLowerCase().replace(/[^a-z0-9]+/gi, "_").replace(/_+/g, "_");
+  const ver = f.version ? `_${f.version}` : "";
+  a.download = `formula_${cleanName}${ver}.json`;
+  a.click();
+}
+
+function exportCurrentFormulaJSON(){
+  if(editingId){
+    exportFormulaJSON(editingId);
+  } else {
+    const f = buildFormulaFromEditor(null, {});
+    if(!f.nombre){
+      alert("Por favor asigna un nombre a la fórmula antes de exportar.");
+      return;
+    }
+    formulas.unshift(f);
+    exportFormulaJSON(f.id);
+    formulas.shift();
+  }
+}
+
 function saveErpConfig(){
   const url = document.getElementById("erp-api-url")?.value.trim() || "";
   const token = document.getElementById("erp-api-token")?.value.trim() || "";
@@ -3625,7 +3660,7 @@ Responde en español, corto y directo (máx. 4-5 líneas salvo que pidan más de
 
 
 // Registra/actualiza el precio y densidad de un ingrediente en la base global
-function rememberPrice(nombre, inci, precio, unidadCosto, densidadMP, proveedor, fase, p8, p9, p10, p11){
+function rememberPrice(nombre, inci, precio, unidadCosto, densidadMP, proveedor, fase, customSKU, stock, stockMin, unidadStock){
   let cleanNombre = (nombre || "").trim();
   const cleanInci = (inci || "").trim();
   if(!cleanNombre && !cleanInci) return;
@@ -3659,13 +3694,38 @@ function rememberPrice(nombre, inci, precio, unidadCosto, densidadMP, proveedor,
   const provSet = new Set(Array.isArray(existing.proveedores) ? existing.proveedores : (existing.proveedor ? [existing.proveedor] : []));
   if(proveedor && proveedor.trim()) provSet.add(proveedor.trim());
 
-  let customSKU = (typeof p8 === "string" && isNaN(parseFloat(p8))) ? p8 : (typeof p10 === "string" ? p10 : "");
-  let stockVal = (p8 !== undefined && p8 !== null && p8 !== "" && !isNaN(parseFloat(p8))) ? parseFloat(p8) : (p9 !== undefined && p9 !== null && p9 !== "" && !isNaN(parseFloat(p9)) ? parseFloat(p9) : (existing.stock !== undefined ? existing.stock : 0));
-  let stockMinVal = (p9 !== undefined && p9 !== null && p9 !== "" && !isNaN(parseFloat(p9)) && p8 !== p9) ? parseFloat(p9) : (p10 !== undefined && p10 !== null && p10 !== "" && !isNaN(parseFloat(p10)) ? parseFloat(p10) : (existing.stockMin !== undefined ? existing.stockMin : 0));
-  let uStock = (typeof p11 === "string" && p11) ? p11 : (typeof p10 === "string" && isNaN(parseFloat(p10)) && p10 ? p10 : (existing.unidadStock || unidadCosto || "g"));
+  // Resolver argumentos de SKU y Stock con tolerancia y total separación entre Stock Actual y Stock Mínimo
+  let actualSKU = "";
+  let actualStock = undefined;
+  let actualStockMin = undefined;
+  let actualUStock = "";
+
+  // Si el 8vo parámetro es numérico y stock no es string, se llamó en estilo histórico sin SKU
+  if(typeof customSKU === "number" || (customSKU !== undefined && customSKU !== null && customSKU !== "" && !isNaN(parseFloat(customSKU)) && typeof stock !== "string" && (typeof stock === "number" || stock === undefined || stock === null || stock === ""))){
+    actualStock = customSKU;
+    actualStockMin = stock;
+    actualSKU = typeof stockMin === "string" ? stockMin : "";
+    actualUStock = typeof unidadStock === "string" ? unidadStock : "";
+  } else {
+    // Estilo estándar con SKU en posición 8: (nombre, inci, precio, unidad, dens, prov, fase, sku, stock, stockMin, unidadStock)
+    actualSKU = (typeof customSKU === "string") ? customSKU.trim() : "";
+    actualStock = stock;
+    actualStockMin = stockMin;
+    actualUStock = (typeof unidadStock === "string") ? unidadStock.trim() : "";
+  }
+
+  const stockVal = (actualStock !== undefined && actualStock !== null && actualStock !== "" && !isNaN(parseFloat(actualStock)))
+    ? parseFloat(actualStock)
+    : (existing.stock !== undefined ? parseFloat(existing.stock) : 0);
+
+  const stockMinVal = (actualStockMin !== undefined && actualStockMin !== null && actualStockMin !== "" && !isNaN(parseFloat(actualStockMin)))
+    ? parseFloat(actualStockMin)
+    : (existing.stockMin !== undefined ? parseFloat(existing.stockMin) : 0);
+
+  const uStock = actualUStock || existing.unidadStock || unidadCosto || "g";
 
   const entry = {
-    sku: customSKU || existing.sku || generateSKU(cleanNombre || cleanInci, fase || existing.fase),
+    sku: actualSKU || existing.sku || generateSKU(cleanNombre || cleanInci, fase || existing.fase),
     nombre: cleanNombre || existing.nombre || cleanInci,
     inci: cleanInci || existing.inci || "",
     fase: (fase && fase.trim()) || existing.fase || "",
@@ -3874,6 +3934,7 @@ function renderCards(){
       </div>
       <div class="card-actions">
         <button class="btn btn-sm btn-primary" onclick="downloadFormulaCSV('${f.id}')" title="Descargar fórmula (% con Nombre Comercial e INCI)">📥 Descargar</button>
+        <button class="btn btn-sm" onclick="exportFormulaJSON('${f.id}')" title="Descargar fórmula completa en formato JSON">{ } JSON</button>
         <button class="btn btn-sm" onclick="openLote('${f.id}')">📦 Lote</button>
         <button class="btn btn-sm" onclick="openSim('${f.id}')">🔬 Simular</button>
         <button class="btn btn-sm btn-expert" onclick="openExperto('${f.id}')">✦ Experto</button>
@@ -4971,20 +5032,148 @@ function exportAll(){
   a.download=`cosmolab_${new Date().toISOString().slice(0,10)}.json`; a.click();
 }
 function importFormulas(){ document.getElementById("import-file").click(); }
+function normalizeFormulaForImport(raw){
+  if(!raw || typeof raw !== "object") return null;
+  const f = raw.type === "formulab_formula" ? (raw.formula || raw) : (raw.formula || raw);
+  const nombre = (f.nombre || f.name || f.finished_product_name || f.formula_name || "").trim();
+  const rawIngs = f.ingredientes || f.ingredients || f.components || f.materials || [];
+
+  if(!nombre && (!Array.isArray(rawIngs) || rawIngs.length === 0)) return null;
+
+  const ingredientes = Array.isArray(rawIngs) ? rawIngs.map(i => ({
+    fase: i.fase || i.phase || "A",
+    nombre: (i.nombre || i.name || i.commercial_name || i.raw_material_name || "").trim(),
+    inci: (i.inci || i.inci_name || "").trim(),
+    porcentaje: parseFloat(i.porcentaje ?? i.percentage ?? i.pct) || 0,
+    precio: (i.precio !== undefined && i.precio !== null && i.precio !== "") ? parseFloat(i.precio) : ((i.unit_cost !== undefined && i.unit_cost !== null && i.unit_cost !== "") ? parseFloat(i.unit_cost) : null),
+    unidadCosto: i.unidadCosto || i.cost_unit || i.unit || "g",
+    densidadMP: (i.densidadMP !== undefined && i.densidadMP !== null && i.densidadMP !== "" && !isNaN(parseFloat(i.densidadMP))) ? parseFloat(i.densidadMP) : ((i.densidad !== undefined && i.densidad !== null && !isNaN(parseFloat(i.densidad))) ? parseFloat(i.densidad) : ((i.density_g_ml !== undefined && i.density_g_ml !== null && !isNaN(parseFloat(i.density_g_ml))) ? parseFloat(i.density_g_ml) : null)),
+    proveedor: (i.proveedor || i.supplier || "").trim()
+  })) : [];
+
+  return {
+    id: String(f.id || f.formula_id || uid()),
+    nombre: nombre || "Fórmula Importada",
+    categoriaId: f.categoriaId || f.category_id || "",
+    version: f.version || "v1.0",
+    status: f.status || "borrador",
+    loteRef: parseFloat(f.loteRef ?? f.standard_batch_size_g ?? f.batch_size) || 1000,
+    densidad: parseFloat(f.densidad ?? f.finished_density_g_ml ?? f.density) || 1.0,
+    ph: f.ph ?? f.ph_target ?? "",
+    procedimiento: Array.isArray(f.procedimiento) ? f.procedimiento : (Array.isArray(f.procedure) ? f.procedure : []),
+    presentaciones: Array.isArray(f.presentaciones) ? f.presentaciones : (Array.isArray(f.packagings) ? f.packagings : []),
+    versiones: Array.isArray(f.versiones) ? f.versiones : (Array.isArray(f.versions) ? f.versions : []),
+    notas: f.notas || f.notes || "",
+    ingredientes,
+    ts: f.ts || Date.now(),
+    tsUpdated: f.tsUpdated || Date.now()
+  };
+}
+
 function handleImport(e){
   const file=e.target.files[0]; if(!file) return;
   const r=new FileReader();
   r.onload=ev=>{
     try{
       const d=JSON.parse(ev.target.result);
-      const nF=d.formulas||[], nC=d.categories||[], nP=d.priceDB||{};
-      const nPrecios=Object.keys(nP).length;
-      if(!confirm(`Importar ${nF.length} fórmulas, ${nC.length} categorías y ${nPrecios} precios de ingredientes?`)) return;
+      
+      // 1. Caso Array directo de fórmulas: [ {...}, {...} ]
+      if(Array.isArray(d)){
+        const validFormulas = d.map(normalizeFormulaForImport).filter(Boolean);
+        if(validFormulas.length === 0){
+          alert("El archivo JSON contiene una lista pero no se encontraron fórmulas con estructura válida.");
+          return;
+        }
+        if(!confirm(`¿Deseas importar ${validFormulas.length} fórmula(s) desde el archivo?`)) return;
+        validFormulas.forEach(f => {
+          const exIdx = formulas.findIndex(x => String(x.id) === String(f.id));
+          if(exIdx >= 0) formulas[exIdx] = f; else formulas.unshift(f);
+          (f.ingredientes||[]).forEach(i => {
+            if(i.nombre || i.inci) rememberPrice(i.nombre, i.inci, i.precio, i.unidadCosto, i.densidadMP, i.proveedor, i.fase);
+          });
+        });
+        persist(); persistPriceDB(); renderCards();
+        if(window.__forceFirestoreSyncNow) window.__forceFirestoreSyncNow();
+        alert(`✓ Se importaron ${validFormulas.length} fórmula(s) correctamente.`);
+        return;
+      }
+
+      // 2. Caso de fórmula individual (sobre type: "formulab_formula", BOM ERP, o un objeto de fórmula directo)
+      const singleFormula = normalizeFormulaForImport(d);
+      if(singleFormula && !Array.isArray(d.formulas) && !d.priceDB && !d.categories){
+        const f = singleFormula;
+        if(!confirm(`¿Deseas importar la fórmula individual "${f.nombre}" (${(f.ingredientes||[]).length} ingredientes)?`)) return;
+        const existingIdx = formulas.findIndex(x => String(x.id) === String(f.id));
+        if(existingIdx >= 0){
+          if(confirm(`Ya existe una fórmula con el mismo ID ("${f.nombre}"). ¿Deseas sobrescribirla? (Presiona Cancelar para importarla como una copia nueva).`)){
+            formulas[existingIdx] = f;
+          } else {
+            const copy = JSON.parse(JSON.stringify(f));
+            copy.id = uid();
+            copy.nombre += " (Importada)";
+            copy.ts = Date.now();
+            copy.tsUpdated = Date.now();
+            formulas.unshift(copy);
+          }
+        } else {
+          formulas.unshift(f);
+        }
+        (f.ingredientes||[]).forEach(i => {
+          if(i.nombre || i.inci){
+            rememberPrice(i.nombre, i.inci, i.precio, i.unidadCosto, i.densidadMP, i.proveedor, i.fase);
+          }
+        });
+        persist();
+        persistPriceDB();
+        renderCards();
+        if(window.__forceFirestoreSyncNow) window.__forceFirestoreSyncNow();
+        alert(`✓ Fórmula "${f.nombre}" importada con éxito.`);
+        return;
+      }
+
+      // 3. Caso Respaldo Completo FormuLab: { formulas: [...], categories: [...], priceDB: {...} }
+      const rawFormulas = Array.isArray(d.formulas) ? d.formulas : [];
+      const nC = Array.isArray(d.categories) ? d.categories : [];
+      const nP = (d.priceDB && typeof d.priceDB === "object") ? d.priceDB : {};
+      const nPrecios = Object.keys(nP).length;
+
+      // Si tiene solo 1 fórmula en d.formulas y nada más en el backup
+      if(rawFormulas.length === 1 && nC.length === 0 && nPrecios === 0){
+        const f = normalizeFormulaForImport(rawFormulas[0]) || rawFormulas[0];
+        if(confirm(`¿Deseas importar la fórmula individual "${f.nombre}" (${(f.ingredientes||[]).length} ingredientes)?`)){
+          const existingIdx = formulas.findIndex(x => String(x.id) === String(f.id));
+          if(existingIdx >= 0){
+            formulas[existingIdx] = f;
+          } else {
+            formulas.unshift(f);
+          }
+          (f.ingredientes||[]).forEach(i => {
+            if(i.nombre || i.inci){
+              rememberPrice(i.nombre, i.inci, i.precio, i.unidadCosto, i.densidadMP, i.proveedor, i.fase);
+            }
+          });
+          persist(); persistPriceDB(); renderCards();
+          if(window.__forceFirestoreSyncNow) window.__forceFirestoreSyncNow();
+          alert(`✓ Fórmula "${f.nombre}" importada con éxito.`);
+          return;
+        }
+        return;
+      }
+
+      if(!confirm(`Importar ${rawFormulas.length} fórmulas, ${nC.length} categorías y ${nPrecios} precios de ingredientes?`)) return;
       nC.forEach(c=>{ if(!categories.find(x=>x.id===c.id)) categories.push(c); });
-      nF.forEach(f=>{ if(!formulas.find(x=>x.id===f.id)) formulas.unshift(f); });
+      rawFormulas.forEach(raw=>{
+        const f = normalizeFormulaForImport(raw) || raw;
+        if(!formulas.find(x=>x.id===f.id)) formulas.unshift(f);
+      });
       Object.assign(priceDB, nP); // los precios importados sobreescriben coincidencias existentes
-      persist(); persistPriceDB(); renderCards(); alert("Importación completada.");
-    }catch{ alert("Archivo inválido."); }
+      persist(); persistPriceDB(); renderCards();
+      if(window.__forceFirestoreSyncNow) window.__forceFirestoreSyncNow();
+      alert("Importación completada.");
+    }catch(err){
+      console.error("Error en handleImport:", err);
+      alert("Archivo JSON inválido o con formato incorrecto.");
+    }
   };
   r.readAsText(file); e.target.value="";
 }
