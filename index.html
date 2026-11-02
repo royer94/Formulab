@@ -1963,22 +1963,6 @@ function buildIngredientsIndex(){
       if(f.nombre) e.formulas.add(f.nombre);
     });
   });
-      if(i.proveedor && i.proveedor.trim()) e.proveedores.add(i.proveedor.trim());
-      if((f.ts||0) >= e.ts){
-        if(i.inci && !e.inci) e.inci = i.inci;
-        if(i.fase && !e.fase) e.fase = i.fase;
-        if(i.precio !== undefined && i.precio !== null && i.precio !== ""){
-          e.precio = parseFloat(i.precio);
-          e.unidad = i.unidadCosto || "g";
-        }
-        if(i.densidadMP !== undefined && i.densidadMP !== null && i.densidadMP !== ""){
-          e.densidadMP = parseFloat(i.densidadMP);
-        }
-        e.ts = f.ts || 0;
-      }
-      if(f.nombre) e.formulas.add(f.nombre);
-    });
-  });
 
   // 3. Fallback de densidades si aún no estuviera fijada
   Object.keys(idx).forEach(k=>{
@@ -6098,8 +6082,8 @@ applyTheme(localStorage.getItem("formulab_theme")||"dark");
 // ═══════════════════════════════════════════════
 // INIT
 // ═══════════════════════════════════════════════
-if(typeof depurarInsumosFantasma === "function") depurarInsumosFantasma(true);
 persist(); renderCards(); checkApiBanner(); renderKeyStatus();
+if(typeof depurarInsumosFantasma === "function") depurarInsumosFantasma(true);
 
 // Autoguardado: cualquier cambio dentro del editor de fórmulas
 // (inputs, selects, textareas, y clics que agregan/quitan filas,
@@ -6355,9 +6339,9 @@ persist(); renderCards(); checkApiBanner(); renderKeyStatus();
     }
     persist();      // refresca localStorage (cache offline) + stats + sidebar
     persistPriceDB();
-    if(typeof depurarInsumosFantasma === "function") depurarInsumosFantasma(true);
     if(typeof renderCards === "function") renderCards();
     if(typeof refreshAutocompleteLists === "function") refreshAutocompleteLists();
+    if(typeof depurarInsumosFantasma === "function") depurarInsumosFantasma(true);
     setSaveStatus(`Sincronizado ✓ (${formulas.length} fórmulas)`, "ok");
     // Recordatorio de respaldo periódico (sin descarga automática forzada)
     if(typeof checkBackupReminder === "function") checkBackupReminder();
