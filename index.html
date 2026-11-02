@@ -724,6 +724,21 @@ select.input{cursor:pointer;appearance:none;
         </div>
         <div id="presentations-list" style="display:flex;flex-direction:column;gap:6px"></div>
         <div style="font-size:11px;color:var(--muted);margin-top:4px">Agrega tamaños (ej: 50 mL, 100 g) y asocia su envase, gotero/tapa, etiqueta y caja con el botón <strong>📦 Empaque</strong> para calcular su costo exacto y PVP.</div>
+        
+        <!-- COSTO EXTRA AUTOMÁTICO: COMISIÓN POR PAGO CON TARJETA -->
+        <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;margin-top:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:0">
+            <input type="checkbox" id="f-comision-tarjeta-chk" checked onchange="updateCosts()" style="width:16px;height:16px;accent-color:var(--accent);cursor:pointer">
+            <div>
+              <span style="font-size:12px;font-weight:600;color:var(--text)">💳 Comisión por pago con tarjeta</span>
+              <div style="font-size:10.5px;color:var(--muted)">Costo extra automático aplicado sobre Granel + Empaque</div>
+            </div>
+          </label>
+          <div style="display:flex;align-items:center;gap:6px">
+            <span class="badge" style="background:rgba(155,110,240,.15);color:var(--purple);font-size:11px;font-family:var(--fm);font-weight:700">+3,87% auto</span>
+            <span style="font-size:10.5px;color:var(--muted)" title="Tarifa pasarela Wompi (1,99%) + IVA de comisión (19% de 1,99% = 0,38%) + ReteFuente (1,50%) = 3,8681%">(1,99% + IVA 19% + ReteFuente 1,5%)</span>
+          </div>
+        </div>
       </div>
 
       <!-- Summary boxes -->
@@ -1688,6 +1703,14 @@ function generateSKU(nombre, fase, unidad){
   return prefix + "-" + tag + "-" + code;
 }
 
+// ─── COMISIÓN POR PAGO CON TARJETA (Pasarela Wompi / Nequi Negocios) ───
+// Tarifa base: 1,99%
+// IVA de la comisión: 19% sobre 1,99% = 0,3781%
+// ReteFuente de la venta: 1,50%
+// Tasa total automática: 1,99% + 0,3781% + 1,50% = 3,8681% (~3,87%)
+const TASA_COMISION_TARJETA = 0.038681;
+const PCT_COMISION_TARJETA_LABEL = "3,87%";
+
 // ─── CONVERSIÓN DE UNIDADES PARA INVENTARIO Y FORMULACIÓN ───
 function toGramos(cant, unidad, dens){
   const c = parseFloat(cant) || 0;
@@ -2282,6 +2305,7 @@ function recalculateFormulaCosts(f){
   const costoPorG = costoConOH / loteRef;
 
   if(Array.isArray(f.presentaciones)){
+    const aplicarComision = (f.incluirComisionTarjeta !== false);
     f.presentaciones = f.presentaciones.map(p => {
       const cant = parseFloat(p.cantidad) || 0;
       const factor = toGrams[p.unidad] || 1;
@@ -2297,10 +2321,15 @@ function recalculateFormulaCosts(f){
           }
         }
       });
-      const c = Math.round(costoBulk + costoEmpaque);
+      const subtotalPres = costoBulk + costoEmpaque;
+      const comisionTarjeta = aplicarComision ? (subtotalPres * TASA_COMISION_TARJETA) : 0;
+      const c = Math.round(subtotalPres + comisionTarjeta);
       const v = margen < 1 ? Math.round(c / (1 - margen)) : c;
       return {
         ...p,
+        costoBulk: Math.round(costoBulk),
+        costoEmpaque: Math.round(costoEmpaque),
+        comisionTarjeta: Math.round(comisionTarjeta),
         costo: c,
         pvp: v
       };
@@ -4486,6 +4515,8 @@ function openEditor(id){
   // Load presentations
   document.getElementById("presentations-list").innerHTML="";
   (f?.presentaciones||[]).forEach(p=>addPresentation(p));
+  const comChk = document.getElementById("f-comision-tarjeta-chk");
+  if(comChk) comChk.checked = (f?.incluirComisionTarjeta !== false);
   // Load procedure steps
   loadProcSteps(f?.procedimiento||[]);
   updateCosts();
@@ -4841,10 +4872,14 @@ function updateCosts(){
           }
         }
       });
-      const costoPres  = costoBulk + costoEmpaque;
+      const subtotalPres = costoBulk + costoEmpaque;
+      const comChk = document.getElementById("f-comision-tarjeta-chk");
+      const aplicarComision = comChk ? comChk.checked : true;
+      const comisionTarjeta = aplicarComision ? (subtotalPres * TASA_COMISION_TARJETA) : 0;
+      const costoPres  = subtotalPres + comisionTarjeta;
       const pvpPres    = costoPres / (1-margen);
       const hasEmpaque = costoEmpaque > 0;
-      return `<div class="pres-summary-box" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:4px">
+      return `<div class="pres-summary-box" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:5px">
         <div class="cost-box-label" style="font-weight:700;color:var(--text);font-size:12px">${esc(p.nombre||p.cantidad+" "+p.unidad)} (${p.cantidad} ${p.unidad})</div>
         <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:4px">
           <span style="font-size:11px;color:var(--muted)">Costo Unitario:</span>
@@ -4854,8 +4889,13 @@ function updateCosts(){
           <span style="font-size:11px;color:var(--muted)">PVP Sugerido:</span>
           <span style="font-size:14px;font-weight:700;color:var(--ok);font-family:var(--fm)">${fmtMoney(pvpPres)}</span>
         </div>
-        <div style="font-size:10.5px;color:var(--muted);margin-top:4px;border-top:1px dashed var(--border);padding-top:4px">
-          Granel: <strong>${fmtMoney(costoBulk)}</strong> ${hasEmpaque ? `· Empaque: <strong>${fmtMoney(costoEmpaque)}</strong>` : ''}
+        <div style="font-size:10.5px;color:var(--muted);margin-top:4px;border-top:1px dashed var(--border);padding-top:4px;display:flex;flex-direction:column;gap:3px">
+          <div>Granel: <strong>${fmtMoney(costoBulk)}</strong> ${hasEmpaque ? `· Empaque: <strong>${fmtMoney(costoEmpaque)}</strong>` : ''}</div>
+          ${comisionTarjeta > 0 ? `
+          <div style="color:var(--accent2);display:flex;justify-content:space-between;align-items:center" title="Tarifa Wompi (1,99%): $${fmtMoney(subtotalPres*0.0199)} · IVA de comisión (19%): $${fmtMoney(subtotalPres*0.0199*0.19)} · ReteFuente (1,50%): $${fmtMoney(subtotalPres*0.015)}">
+            <span>💳 Comisión tarjeta (${PCT_COMISION_TARJETA_LABEL}): <strong>+${fmtMoney(comisionTarjeta)}</strong></span>
+            <span style="font-size:9.5px;color:var(--muted)">1.99% + IVA + ReteF</span>
+          </div>` : ''}
         </div>
       </div>`;
     }).join("");
@@ -4904,10 +4944,17 @@ function computeCostSnapshot(){
         }
       }
     });
-    const costoPres = Math.round(costoBulk + costoEmpaque);
+    const subtotalPres = costoBulk + costoEmpaque;
+    const comChk = document.getElementById("f-comision-tarjeta-chk");
+    const aplicarComision = comChk ? comChk.checked : true;
+    const comisionTarjeta = aplicarComision ? (subtotalPres * TASA_COMISION_TARJETA) : 0;
+    const costoPres = Math.round(subtotalPres + comisionTarjeta);
     const pvpPres = Math.round(costoPres / (1 - margen));
     return {
       ...p,
+      costoBulk: Math.round(costoBulk),
+      costoEmpaque: Math.round(costoEmpaque),
+      comisionTarjeta: Math.round(comisionTarjeta),
       costo: costoPres,
       pvp: pvpPres
     };
@@ -4953,7 +5000,7 @@ function buildFormulaFromEditor(existing, opts){
       ingredientes: existing.ingredientes ? JSON.parse(JSON.stringify(existing.ingredientes)) : []
     });
   }
-  const {costoPer100,pvpPer100}=computeCostSnapshot();
+  const {costoPer100,pvpPer100,presentaciones: calculatedPres}=computeCostSnapshot();
   return {
     id: (existing && existing.id) ? existing.id : (editingId || uid()),
     nombre,
@@ -4967,11 +5014,12 @@ function buildFormulaFromEditor(existing, opts){
     overhead: parseFloat(document.getElementById("f-overhead").value)||15,
     densidad: parseFloat(document.getElementById("f-densidad").value)||1,
     margen: parseFloat(document.getElementById("f-margen").value)||40,
+    incluirComisionTarjeta: document.getElementById("f-comision-tarjeta-chk") ? document.getElementById("f-comision-tarjeta-chk").checked : true,
     costoPer100, pvpPer100,
     ingredientes: getIngredientes().sort((a,b)=>(parseFloat(b.porcentaje)||0)-(parseFloat(a.porcentaje)||0)),
     procedimiento: getProcSteps(),
     otrosCostos: getOtherCosts(),
-    presentaciones: getPresentations(),
+    presentaciones: (calculatedPres && calculatedPres.length) ? calculatedPres : getPresentations(),
     versionHistory: history,
     ts: (existing && existing.ts) ? existing.ts : Date.now(),
     tsUpdated: Date.now()
@@ -5420,13 +5468,16 @@ function renderLote(){
   }
 
   // RESUMEN FINANCIERO DEL LOTE
-  const totalLote = totalCostoMP + totalCostoEmpaque;
+  const aplicarComision = (f.incluirComisionTarjeta !== false);
+  const subtotalLote = totalCostoMP + totalCostoEmpaque;
+  const comisionLote = (aplicarComision && subtotalLote > 0) ? (subtotalLote * TASA_COMISION_TARJETA) : 0;
+  const totalLote = subtotalLote + comisionLote;
   const hasAnyBatchCost = hasMPCosts || hasEmpaqueCosts;
   const costPerUnit = (unitsToPackage > 0 && hasAnyBatchCost) ? (totalLote / unitsToPackage) : null;
 
   html += `<div style="margin-top:16px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px">
     <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px">Resumen de Costos y Rendimiento de Producción</div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;text-align:center">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;text-align:center">
       <div style="background:var(--surface);padding:8px;border-radius:6px;border:1px solid var(--border)">
         <div style="font-size:10px;color:var(--muted);text-transform:uppercase">Materia Prima (Granel)</div>
         <div style="font-size:14px;font-weight:700;color:var(--text);font-family:var(--fm);margin-top:2px">${hasMPCosts ? fmtMoney(totalCostoMP) : '—'}</div>
@@ -5435,6 +5486,11 @@ function renderLote(){
         <div style="font-size:10px;color:var(--muted);text-transform:uppercase">Materiales de Empaque</div>
         <div style="font-size:14px;font-weight:700;color:var(--text);font-family:var(--fm);margin-top:2px">${hasEmpaqueCosts ? fmtMoney(totalCostoEmpaque) : (selectedPres ? '$0' : '—')}</div>
       </div>
+      ${aplicarComision ? `
+      <div style="background:var(--surface);padding:8px;border-radius:6px;border:1px solid var(--border)" title="Tarifa Wompi (1,99%) + IVA com. (19%) 0,38% + ReteFuente (1,50%) = 3,87%">
+        <div style="font-size:10px;color:var(--accent);text-transform:uppercase">💳 Comis. Tarjeta (+${PCT_COMISION_TARJETA_LABEL})</div>
+        <div style="font-size:14px;font-weight:700;color:var(--accent);font-family:var(--fm);margin-top:2px">${hasAnyBatchCost ? fmtMoney(comisionLote) : '—'}</div>
+      </div>` : ''}
       <div style="background:var(--surface);padding:8px;border-radius:6px;border:1px solid var(--border)">
         <div style="font-size:10px;color:var(--muted);text-transform:uppercase">Costo Total Producción</div>
         <div style="font-size:15px;font-weight:700;color:var(--accent);font-family:var(--fm);margin-top:2px">${hasAnyBatchCost ? fmtMoney(totalLote) : '—'}</div>
