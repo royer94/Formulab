@@ -867,6 +867,7 @@ select.input{cursor:pointer;appearance:none;
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn btn-secondary btn-sm" onclick="toggleFiltroInsumosBajos()" id="btn-toggle-filtro-bajos">Ver Insumos por Reponer</button>
         <button class="btn btn-erp btn-sm" onclick="exportShoppingListCSV()">↓ Descargar Lista de Compras (CSV)</button>
+        <button class="btn btn-primary btn-sm" onclick="depurarInsumosFantasma(false)" id="btn-depurar-agotados" title="Depura y vincula insumos duplicados o fantasmas con stock 0">🧹 Depurar Fantasmas / Agotados</button>
       </div>
     </div>
   </div>
@@ -883,6 +884,7 @@ select.input{cursor:pointer;appearance:none;
     </div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <button class="btn btn-secondary btn-sm" onclick="syncAllIngredientPricesToFormulas()" title="Actualiza y recalcula todas las fórmulas con los últimos precios registrados en el catálogo">🔄 Sincronizar Precios a Fórmulas</button>
+      <button class="btn btn-ghost btn-sm" onclick="depurarInsumosFantasma(false)" title="Depura y vincula insumos duplicados o residuales con stock 0">🧹 Depurar Fantasmas</button>
       <button class="btn btn-primary btn-sm" onclick="openModalNuevoInsumo()">+ Nuevo Insumo</button>
       <button class="btn btn-ghost btn-sm" id="ingdb-merge-btn" onclick="mergeSelectedIngredients()" style="display:none">🔗 Unificar seleccionados</button>
     </div>
@@ -1757,12 +1759,53 @@ function persistPriceDB(){
   localStorage.setItem("cosmolab_precios", JSON.stringify(priceDB));
   if(window.__scheduleFirestoreSync) window.__scheduleFirestoreSync();
 }
-// Clave normalizada para buscar coincidencias por nombre o INCI
-function priceKey(s){ return String(s||"").trim().toLowerCase(); }
+// Clave normalizada para buscar coincidencias por nombre o INCI (insensible a tildes, mayúsculas y espacios)
+function priceKey(s){
+  return String(s||"")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+// Limpia nombres INCI removiendo paréntesis auxiliares como (Water), (Tea Tree), caracteres especiales y tildes
+function cleanInciKey(s){
+  return String(s||"")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s*\([^)]*\)/g, "")
+    .replace(/[^a-z0-9]/gi, " ")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+// Migra claves antiguas con tildes o mayúsculas en priceDB hacia sus claves canónicas normalizadas
+function migratePriceDBKeys(db){
+  if(!db || typeof db !== "object") return;
+  Object.keys(db).forEach(k => {
+    const p = db[k];
+    if(!p || typeof p !== "object") return;
+    const normKey = priceKey(k);
+    if(normKey && normKey !== k){
+      if(!db[normKey]){
+        db[normKey] = p;
+      } else {
+        const canon = db[normKey];
+        if((!canon.stock || canon.stock === 0) && p.stock > 0){
+          canon.stock = p.stock;
+        }
+        if(!canon.sku && p.sku) canon.sku = p.sku;
+      }
+      delete db[k];
+    }
+  });
+}
 
 // Detecta y corrige entradas fantasma creadas sólo con el nombre INCI cuando ya existe el insumo comercial
 function repairGhostAliases(db){
   if(!db || typeof db !== "object") return 0;
+  migratePriceDBKeys(db);
   const inciToCanonKey = new Map();
   Object.entries(db).forEach(([k, p]) => {
     if(!p || typeof p !== "object" || p._isAlias) return;
@@ -1770,6 +1813,8 @@ function repairGhostAliases(db){
     const kInci = priceKey(p.inci);
     if(kNom && kInci && kNom !== kInci && k === kNom){
       inciToCanonKey.set(kInci, kNom);
+      const cInci = cleanInciKey(p.inci);
+      if(cInci) inciToCanonKey.set(cInci, kNom);
     }
   });
 
@@ -1778,17 +1823,16 @@ function repairGhostAliases(db){
     if(!p || typeof p !== "object") return;
     const kNom = priceKey(p.nombre);
     const kInci = priceKey(p.inci);
-    if(kInci && inciToCanonKey.has(kInci)){
-      const canonKey = inciToCanonKey.get(kInci);
-      if(k !== canonKey){
-        p._isAlias = true;
-        p.canonicalKey = canonKey;
-        const canon = db[canonKey];
-        if(canon && (!canon.stock || canon.stock === 0) && p.stock > 0){
-          canon.stock = p.stock;
-        }
-        repaired++;
+    const cInci = cleanInciKey(p.inci);
+    const canonKey = inciToCanonKey.get(kInci) || (cInci ? inciToCanonKey.get(cInci) : null);
+    if(canonKey && k !== canonKey){
+      p._isAlias = true;
+      p.canonicalKey = canonKey;
+      const canon = db[canonKey];
+      if(canon && (!canon.stock || canon.stock === 0) && p.stock > 0){
+        canon.stock = p.stock;
       }
+      repaired++;
     }
   });
   return repaired;
@@ -1799,6 +1843,7 @@ function buildIngredientsIndex(){
   const idx = {}; // key -> {sku, nombre, inci, fase, proveedores:Set, precio, unidad, densidadMP, stock, stockMin, unidadStock, ts, formulas:Set}
   const inciToCanonKey = new Map();
 
+  migratePriceDBKeys(priceDB);
   repairGhostAliases(priceDB);
 
   // 1. Cargar todos los insumos almacenados en priceDB (incluyendo los creados directamente en el catálogo)
@@ -1809,7 +1854,7 @@ function buildIngredientsIndex(){
     const nombre = (p.nombre || k).trim();
     if(!nombre) return;
     const key = priceKey(nombre);
-    if(k !== key) return; // 'k' no es la clave principal canónica
+    if(k !== key && priceKey(k) !== key) return; // 'k' no es la clave principal canónica
 
     if(!idx[key]){
       const provs = new Set(Array.isArray(p.proveedores) ? p.proveedores : (p.proveedor ? [p.proveedor] : []));
@@ -1828,7 +1873,11 @@ function buildIngredientsIndex(){
         ts: p.ts || 0,
         formulas: new Set()
       };
-      if(p.inci) inciToCanonKey.set(priceKey(p.inci), key);
+      if(p.inci){
+        inciToCanonKey.set(priceKey(p.inci), key);
+        const cInci = cleanInciKey(p.inci);
+        if(cInci) inciToCanonKey.set(cInci, key);
+      }
     } else {
       if(p.stock !== undefined && p.stock !== null && p.stock !== "") idx[key].stock = parseFloat(p.stock);
       if(p.stockMin !== undefined && p.stockMin !== null && p.stockMin !== "") idx[key].stockMin = parseFloat(p.stockMin);
@@ -1842,15 +1891,27 @@ function buildIngredientsIndex(){
     (f.ingredientes||[]).forEach(i=>{
       const kNom = priceKey(i.nombre);
       const kInci = priceKey(i.inci);
+      const cInci = cleanInciKey(i.inci);
 
-      // Resolución canónica: busca primero por nombre comercial, luego por INCI mapeado, luego por alias
+      // Resolución canónica inteligente: busca primero por nombre comercial, luego por INCI mapeado, luego por INCI limpio, luego por coincidencia difusa, luego por alias
       let matchKey = (kNom && idx[kNom]) ? kNom : null;
       if(!matchKey && kInci && inciToCanonKey.has(kInci)){
         matchKey = inciToCanonKey.get(kInci);
       }
+      if(!matchKey && cInci && inciToCanonKey.has(cInci)){
+        matchKey = inciToCanonKey.get(cInci);
+      }
       if(!matchKey && kInci){
-        const found = Object.entries(idx).find(([_, r]) => r.inci && priceKey(r.inci) === kInci);
+        const found = Object.entries(idx).find(([_, r]) => r.inci && (priceKey(r.inci) === kInci || cleanInciKey(r.inci) === cInci));
         if(found) matchKey = found[0];
+      }
+      // Coincidencia difusa de nombre contra insumos oficiales existentes
+      if(!matchKey && kNom && kNom.length > 3){
+        const foundFuzzy = Object.entries(idx).find(([_, r]) => {
+          const rNom = priceKey(r.nombre);
+          return rNom && (rNom === kNom || (rNom.length > 3 && (rNom.includes(kNom) || kNom.includes(rNom))));
+        });
+        if(foundFuzzy) matchKey = foundFuzzy[0];
       }
       if(!matchKey && (kNom || kInci)){
         const alias = (kNom ? priceDB[kNom] : null) || (kInci ? priceDB[kInci] : null);
@@ -1876,11 +1937,32 @@ function buildIngredientsIndex(){
           stockMin: 0,
           unidadStock: i.unidadCosto || "g",
           ts: 0,
-          formulas: new Set()
+          formulas: new Set(),
+          _isFormulaOnly: true
         };
-        if(i.inci) inciToCanonKey.set(priceKey(i.inci), key);
+        if(i.inci){
+          inciToCanonKey.set(priceKey(i.inci), key);
+          const ci = cleanInciKey(i.inci);
+          if(ci) inciToCanonKey.set(ci, key);
+        }
       }
       const e = idx[key];
+      if(i.proveedor && i.proveedor.trim()) e.proveedores.add(i.proveedor.trim());
+      if((f.ts||0) >= e.ts){
+        if(i.inci && !e.inci) e.inci = i.inci;
+        if(i.fase && !e.fase) e.fase = i.fase;
+        if(i.precio !== undefined && i.precio !== null && i.precio !== ""){
+          e.precio = parseFloat(i.precio);
+          e.unidad = i.unidadCosto || "g";
+        }
+        if(i.densidadMP !== undefined && i.densidadMP !== null && i.densidadMP !== ""){
+          e.densidadMP = parseFloat(i.densidadMP);
+        }
+        e.ts = f.ts || 0;
+      }
+      if(f.nombre) e.formulas.add(f.nombre);
+    });
+  });
       if(i.proveedor && i.proveedor.trim()) e.proveedores.add(i.proveedor.trim());
       if((f.ts||0) >= e.ts){
         if(i.inci && !e.inci) e.inci = i.inci;
@@ -1922,8 +2004,11 @@ function renderIngredientsDB(){
   rows.forEach(r => {
     const stG = toGramos(r.stock, r.unidadStock, r.densidadMP);
     const minG = toGramos(r.stockMin, r.unidadStock, r.densidadMP);
-    if(stG <= 0) totalAgotados++;
-    else if(minG > 0 && stG <= minG) totalBajos++;
+    if(stG <= 0 && !r._isFormulaOnly){
+      totalAgotados++;
+    } else if(minG > 0 && stG <= minG){
+      totalBajos++;
+    }
   });
 
   const banner = document.getElementById("ingdb-alert-banner");
@@ -1978,7 +2063,9 @@ function renderIngredientsDB(){
     const minG = toGramos(r.stockMin, r.unidadStock, r.densidadMP);
 
     let badgeStock = "";
-    if(stG <= 0){
+    if(r._isFormulaOnly && stG <= 0){
+      badgeStock = `<span class="badge" style="background:rgba(155,110,240,.15);color:var(--purple);font-size:11px" title="Este ingrediente solo está presente en fórmulas y no está registrado en el inventario oficial">📋 En fórmula</span>`;
+    } else if(stG <= 0){
       badgeStock = `<span class="badge" style="background:rgba(240,74,122,.15);color:var(--danger);font-weight:600">🚨 Agotado</span>`;
     } else if(minG > 0 && stG <= minG){
       badgeStock = `<span class="badge" style="background:rgba(240,200,74,.15);color:var(--warn);font-weight:600">⚠️ Bajo</span>`;
@@ -2782,6 +2869,144 @@ function ejecutarUnificarInsumos(){
   alert(`✓ ¡Unificación completada con éxito!\nSe unificaron ${secondaryKeys.length} duplicado(s) en "${masterItem.nombre}".\nSe actualizaron ${totalFormulasUpdated} fórmula(s) y se eliminaron definitivamente los duplicados.`);
 }
 
+// ── Depuración y Reconciliación Automática de Insumos Fantasma y Agotados Residuales ──
+async function depurarInsumosFantasma(silent = false){
+  migratePriceDBKeys(priceDB);
+
+  const beforeIdx = buildIngredientsIndex();
+  const totalBefore = Object.keys(beforeIdx).length;
+
+  // 1. Identificar insumos canónicos oficiales (aquellos con SKU real del ERP o con stock físico > 0)
+  const canonMap = new Map();
+  const canonByName = new Map();
+  const canonByInci = new Map();
+
+  Object.entries(priceDB).forEach(([k, p]) => {
+    if(!p || typeof p !== "object" || p._isAlias) return;
+    const hasRealSku = p.sku && !p.sku.startsWith("MP-X");
+    const hasStock = p.stock !== undefined && p.stock !== null && parseFloat(p.stock) > 0;
+    if(hasRealSku || hasStock){
+      canonMap.set(k, p);
+      if(p.nombre) canonByName.set(priceKey(p.nombre), { key: k, item: p });
+      if(p.inci){
+        canonByInci.set(priceKey(p.inci), { key: k, item: p });
+        const ci = cleanInciKey(p.inci);
+        if(ci) canonByInci.set(ci, { key: k, item: p });
+      }
+    }
+  });
+
+  // Si no hubiera insumos con SKU oficial, tomar todos los que tengan stock > 0 o precio fijado
+  if(canonMap.size === 0){
+    Object.entries(priceDB).forEach(([k, p]) => {
+      if(!p || typeof p !== "object" || p._isAlias) return;
+      if(parseFloat(p.stock) > 0 || (p.precio !== null && p.precio !== undefined)){
+        canonMap.set(k, p);
+        if(p.nombre) canonByName.set(priceKey(p.nombre), { key: k, item: p });
+        if(p.inci) canonByInci.set(cleanInciKey(p.inci), { key: k, item: p });
+      }
+    });
+  }
+
+  let unificados = 0;
+  let formulasActualizadas = 0;
+  let purgados = 0;
+
+  // 2. Procesar entradas de priceDB que no sean canónicas y tengan stock <= 0 (los candidatos a fantasma/agotado residual)
+  Object.keys(priceDB).forEach(k => {
+    const p = priceDB[k];
+    if(!p || typeof p !== "object") return;
+    if(canonMap.has(k)) return; // Conservar el registro canónico oficial
+
+    const kNom = priceKey(p.nombre || k);
+    const kInci = cleanInciKey(p.inci);
+
+    // Buscar si corresponde a un insumo canónico
+    let match = canonByName.get(kNom) || (kInci ? canonByInci.get(kInci) : null);
+
+    if(!match && p.nombre && p.nombre.length > 3){
+      const pNom = priceKey(p.nombre);
+      for(const [cKey, cObj] of canonByName.entries()){
+        if(cKey === pNom || (cKey.length > 3 && pNom.length > 3 && (cKey.includes(pNom) || pNom.includes(cKey)))){
+          match = cObj;
+          break;
+        }
+      }
+    }
+
+    if(match && match.key !== k){
+      // Reemplazar uso en fórmulas para que apunten al nombre canónico
+      const count = replaceIngredientInFormulas(k, p.nombre, match.item);
+      formulasActualizadas += count;
+      // Transferir stock remanente si existiera
+      mergeStockIntoCanonical(k, p, match.key, match.item);
+      // Eliminar el duplicado fantasma
+      delete priceDB[k];
+      unificados++;
+    } else {
+      // Si tiene stock 0 y no está en ninguna fórmula (huérfano puro)
+      const countEnFormulas = formulas.reduce((acc, f) => {
+        return acc + (f.ingredientes || []).filter(i => priceKey(i.nombre) === kNom).length;
+      }, 0);
+
+      if(countEnFormulas === 0 && (!p.stock || parseFloat(p.stock) <= 0) && (!p.sku || p.sku.startsWith("MP-X"))){
+        delete priceDB[k];
+        purgados++;
+      }
+    }
+  });
+
+  // 3. Revisar todas las fórmulas para unificar cualquier ingrediente que coincida con un canónico
+  formulas.forEach(f => {
+    let fMod = false;
+    (f.ingredientes || []).forEach(i => {
+      const kIng = priceKey(i.nombre);
+      const cIngInci = cleanInciKey(i.inci);
+      let match = canonByName.get(kIng) || (cIngInci ? canonByInci.get(cIngInci) : null);
+
+      if(!match && kIng && kIng.length > 3){
+        for(const [cKey, cObj] of canonByName.entries()){
+          if(cKey === kIng || (cKey.length > 3 && kIng.length > 3 && (cKey.includes(kIng) || kIng.includes(cKey)))){
+            match = cObj;
+            break;
+          }
+        }
+      }
+
+      if(match && i.nombre !== match.item.nombre){
+        i.nombre = match.item.nombre;
+        if(match.item.inci) i.inci = match.item.inci;
+        if(match.item.densidadMP) i.densidadMP = match.item.densidadMP;
+        if(match.item.unidad) i.unidadCosto = match.item.unidad;
+        if(match.item.precio !== null && match.item.precio !== undefined) i.precio = match.item.precio;
+        fMod = true;
+      }
+    });
+    if(fMod){
+      f.ts = Date.now();
+      formulasActualizadas++;
+    }
+  });
+
+  if(unificados > 0 || purgados > 0 || formulasActualizadas > 0){
+    persist();
+    persistPriceDB();
+    refreshAutocompleteLists();
+    renderIngredientsDB();
+    if(typeof renderCards === "function") renderCards();
+    if(window.__forceFirestoreSyncNow) await window.__forceFirestoreSyncNow();
+  }
+
+  const afterIdx = buildIngredientsIndex();
+  const totalAfter = Object.keys(afterIdx).length;
+
+  if(!silent){
+    alert(`✓ Depuración de inventario completada.\n\n• Insumos antes: ${totalBefore}\n• Insumos depurados / canónicos ahora: ${totalAfter}\n• Insumos unificados: ${unificados}\n• Insumos fantasma purgados: ${purgados}\n• Fórmulas actualizadas: ${formulasActualizadas}\n\nSe eliminaron los insumos agotados residuales y tus fórmulas ahora usan los insumos reales del almacén.`);
+  }
+
+  return { totalBefore, totalAfter, unificados, purgados, formulasActualizadas };
+}
+
 function deleteIngredientFromDB(key){
   const idx = buildIngredientsIndex();
   const item = idx[key];
@@ -3309,7 +3534,7 @@ function parseInsumosCSV(text){
 }
 
 // ── Motor de Conciliación y Fusión Inteligente ERP ⟷ FormuLab ──
-function processERPInsumosImport(rawList, sourceName){
+async function processERPInsumosImport(rawList, sourceName){
   if(!Array.isArray(rawList) || rawList.length === 0){
     alert("No se encontraron registros de materias primas en el listado.");
     return;
@@ -3323,7 +3548,11 @@ function processERPInsumosImport(rawList, sourceName){
   Object.entries(idx).forEach(([key, r]) => {
     if(r.sku) existingBySku.set(String(r.sku).trim().toUpperCase(), { key, item: r });
     if(r.nombre) existingByName.set(priceKey(r.nombre), { key, item: r });
-    if(r.inci) existingByInci.set(priceKey(r.inci), { key, item: r });
+    if(r.inci){
+      existingByInci.set(priceKey(r.inci), { key, item: r });
+      const ci = cleanInciKey(r.inci);
+      if(ci) existingByInci.set(ci, { key, item: r });
+    }
   });
 
   const totalBefore = Object.keys(idx).length;
@@ -3425,16 +3654,18 @@ function processERPInsumosImport(rawList, sourceName){
 
   persist();
   persistPriceDB();
+  await depurarInsumosFantasma(true);
   renderIngredientsDB();
   if(typeof renderCards === "function") renderCards();
-  if(window.__forceFirestoreSyncNow) window.__forceFirestoreSyncNow();
+  if(window.__forceFirestoreSyncNow) await window.__forceFirestoreSyncNow();
 
   // Insumos que solo existían en FormuLab (no vinieron en el catálogo del ERP)
-  const onlyInFormulab = Object.entries(idx)
-    .filter(([key]) => !processedKeys.has(key))
+  const idxAfter = buildIngredientsIndex();
+  const onlyInFormulab = Object.entries(idxAfter)
+    .filter(([key]) => !processedKeys.has(key) && !processedKeys.has(priceKey(key)))
     .map(([key, r]) => ({ key, sku: r.sku, nombre: r.nombre, inci: r.inci, formulas: [...r.formulas] }));
 
-  const totalAfter = Object.keys(buildIngredientsIndex()).length;
+  const totalAfter = Object.keys(idxAfter).length;
 
   showReconciliationModal({
     sourceName: sourceName || "ERP Frescura Natural",
@@ -3838,7 +4069,10 @@ function showView(name){
   if(name==="home")      renderCards();
   if(name==="categories") renderCatsView();
   if(name==="settings"){ renderKeyStatus(); loadErpConfigToUI(); }
-  if(name==="ingredientsdb") renderIngredientsDB();
+  if(name==="ingredientsdb"){
+    if(typeof depurarInsumosFantasma === "function") depurarInsumosFantasma(true);
+    renderIngredientsDB();
+  }
 }
 
 function setFilter(val){
@@ -5864,6 +6098,7 @@ applyTheme(localStorage.getItem("formulab_theme")||"dark");
 // ═══════════════════════════════════════════════
 // INIT
 // ═══════════════════════════════════════════════
+if(typeof depurarInsumosFantasma === "function") depurarInsumosFantasma(true);
 persist(); renderCards(); checkApiBanner(); renderKeyStatus();
 
 // Autoguardado: cualquier cambio dentro del editor de fórmulas
@@ -6120,6 +6355,7 @@ persist(); renderCards(); checkApiBanner(); renderKeyStatus();
     }
     persist();      // refresca localStorage (cache offline) + stats + sidebar
     persistPriceDB();
+    if(typeof depurarInsumosFantasma === "function") depurarInsumosFantasma(true);
     if(typeof renderCards === "function") renderCards();
     if(typeof refreshAutocompleteLists === "function") refreshAutocompleteLists();
     setSaveStatus(`Sincronizado ✓ (${formulas.length} fórmulas)`, "ok");
