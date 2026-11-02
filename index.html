@@ -440,6 +440,7 @@ select.input{cursor:pointer;appearance:none;
   style="display:none;position:fixed;top:14px;left:14px;z-index:601;width:34px;height:34px;border-radius:8px;border:1px solid var(--border);background:var(--panel,#171813);color:#c8f04a;align-items:center;justify-content:center;cursor:pointer;font-size:16px">☰</button>
 <datalist id="dl-ing-nombres"></datalist>
 <datalist id="dl-proveedores"></datalist>
+<datalist id="dl-empaques"></datalist>
 <aside id="sidebar">
   <div class="logo">
     <svg width="34" height="34" viewBox="0 0 34 34" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -714,9 +715,12 @@ select.input{cursor:pointer;appearance:none;
 
       <!-- Presentations -->
       <div>
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:6px">
           <span style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em">Presentaciones del producto (Costeo de Producto Terminado)</span>
-          <button class="btn btn-ghost btn-sm" onclick="addPresentation()">+ Agregar presentación</button>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-secondary btn-sm" type="button" onclick="openModalNuevoInsumo()" title="Registrar nuevo frasco, gotero, etiqueta o empaque en el catálogo">+ Nuevo Insumo / Empaque</button>
+            <button class="btn btn-ghost btn-sm" type="button" onclick="addPresentation()">+ Agregar presentación</button>
+          </div>
         </div>
         <div id="presentations-list" style="display:flex;flex-direction:column;gap:6px"></div>
         <div style="font-size:11px;color:var(--muted);margin-top:4px">Agrega tamaños (ej: 50 mL, 100 g) y asocia su envase, gotero/tapa, etiqueta y caja con el botón <strong>📦 Empaque</strong> para calcular su costo exacto y PVP.</div>
@@ -2467,11 +2471,14 @@ async function guardarInsumoModal(){
   closeModal("modal-insumo");
   renderIngredientsDB();
   if(typeof renderCards === "function") renderCards();
+  if(typeof updateCosts === "function") updateCosts();
 
   if(window.__forceFirestoreSyncNow) await window.__forceFirestoreSyncNow();
 
   if(propRes.formulasUpdated > 0){
     alert(`✓ Insumo guardado.\nSe actualizó automáticamente el precio en ${propRes.formulasUpdated} fórmula(s) (${propRes.rowsUpdated} ingrediente(s)) y se recalcularon sus costos.`);
+  } else if(!editKey){
+    alert(`✓ Insumo "${nombre}" guardado exitosamente en el catálogo oficial de materias primas y empaque.`);
   }
 }
 
@@ -2958,7 +2965,7 @@ async function depurarInsumosFantasma(silent = false){
     const isPackaging = (p.unidad === 'u' || p.unidadCosto === 'u' || p.unidadStock === 'u' || (p.sku && p.sku.startsWith("EMP-")));
     const hasRealSku = (p.sku && !p.sku.startsWith("MP-X"));
 
-    if(isCatalog || hasPrice || hasStock || isPackaging || hasRealSku){
+    if(isCatalog || hasPrice || hasStock || isPackaging || hasRealSku || (p.nombre && p.nombre.trim())){
       canonMap.set(k, p);
       if(p.nombre) canonByName.set(priceKey(p.nombre), { key: k, item: p });
       if(p.inci){
@@ -2973,7 +2980,7 @@ async function depurarInsumosFantasma(silent = false){
   if(canonMap.size === 0){
     Object.entries(priceDB).forEach(([k, p]) => {
       if(!p || typeof p !== "object" || p._isAlias) return;
-      if(parseFloat(p.stock) > 0 || (p.precio !== null && p.precio !== undefined)){
+      if(parseFloat(p.stock) > 0 || (p.precio !== null && p.precio !== undefined) || (p.nombre && p.nombre.trim())){
         canonMap.set(k, p);
         if(p.nombre) canonByName.set(priceKey(p.nombre), { key: k, item: p });
         if(p.inci) canonByInci.set(cleanInciKey(p.inci), { key: k, item: p });
@@ -2994,13 +3001,13 @@ async function depurarInsumosFantasma(silent = false){
     const kNom = priceKey(p.nombre || k);
     const kInci = cleanInciKey(p.inci);
 
-    // Buscar si corresponde a un insumo canónico
+    // Buscar si corresponde a un insumo canónico por coincidencia exacta
     let match = canonByName.get(kNom) || (kInci ? canonByInci.get(kInci) : null);
 
     if(!match && p.nombre && p.nombre.length > 3){
       const pNom = priceKey(p.nombre);
       for(const [cKey, cObj] of canonByName.entries()){
-        if(cKey === pNom || (cKey.length > 3 && pNom.length > 3 && (cKey.includes(pNom) || pNom.includes(cKey)))){
+        if(cKey === pNom){
           match = cObj;
           break;
         }
@@ -3035,7 +3042,7 @@ async function depurarInsumosFantasma(silent = false){
       const hasStock = (p.stock !== undefined && p.stock !== null && parseFloat(p.stock) > 0);
       const isPackaging = (p.unidad === 'u' || p.unidadCosto === 'u' || p.unidadStock === 'u' || (p.sku && p.sku.startsWith("EMP-")));
 
-      if(!isCatalog && !hasPrice && !hasStock && !isPackaging && countEnUso === 0 && (!p.sku || p.sku.startsWith("MP-X"))){
+      if(!isCatalog && !p.nombre && countEnUso === 0 && (!p.sku || p.sku.startsWith("MP-X"))){
         delete priceDB[k];
         purgados++;
       }
@@ -3740,7 +3747,7 @@ async function processERPInsumosImport(rawList, sourceName){
 
   persist();
   persistPriceDB();
-  await depurarInsumosFantasma(true);
+  refreshAutocompleteLists();
   renderIngredientsDB();
   if(typeof renderCards === "function") renderCards();
   if(window.__forceFirestoreSyncNow) await window.__forceFirestoreSyncNow();
@@ -3857,7 +3864,7 @@ function switchReconcileTab(tab){
 }
 
 function refreshAutocompleteLists(){
-  const nombres = new Set(), proveedores = new Set();
+  const nombres = new Set(), proveedores = new Set(), empaques = new Set();
   formulas.forEach(f=>{
     (f.ingredientes||[]).forEach(i=>{
       if(i.nombre && i.nombre.trim()) nombres.add(i.nombre.trim());
@@ -3865,19 +3872,39 @@ function refreshAutocompleteLists(){
     });
     (f.presentaciones||[]).forEach(p=>{
       ['envase', 'tapa', 'etiqueta', 'caja'].forEach(comp => {
-        if(p[comp] && p[comp].trim()) nombres.add(p[comp].trim());
+        if(p[comp] && p[comp].trim()){
+          const val = p[comp].trim();
+          nombres.add(val);
+          empaques.add(val);
+        }
       });
     });
   });
   Object.values(priceDB).forEach(p=>{
-    if(p && p.nombre && p.nombre.trim()) nombres.add(p.nombre.trim());
+    if(p && p.nombre && p.nombre.trim()){
+      const nom = p.nombre.trim();
+      nombres.add(nom);
+      const isPkgUnit = (p.unidad === 'u' || p.unidadCosto === 'u' || p.unidadStock === 'u');
+      const isPkgSku = (p.sku && String(p.sku).startsWith("EMP-"));
+      const isPkgFase = (p.fase && String(p.fase).toLowerCase().includes("empaque"));
+      const cleanNom = nom.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+      const hasPkgWord = cleanNom.includes("FRASCO") || cleanNom.includes("BOTELLA") || cleanNom.includes("POTE") || cleanNom.includes("GOTERO") || cleanNom.includes("TAPA") || cleanNom.includes("VALVULA") || cleanNom.includes("ETIQ") || cleanNom.includes("STICKER") || cleanNom.includes("CAJA") || cleanNom.includes("ESTUCHE") || cleanNom.includes("ENVASE");
+      if(isPkgUnit || isPkgSku || isPkgFase || hasPkgWord){
+        empaques.add(nom);
+      }
+    }
     if(p && p.proveedor && p.proveedor.trim()) proveedores.add(p.proveedor.trim());
     if(p && Array.isArray(p.proveedores)) p.proveedores.forEach(pr => { if(pr && pr.trim()) proveedores.add(pr.trim()); });
   });
   const dlN = document.getElementById("dl-ing-nombres");
   const dlP = document.getElementById("dl-proveedores");
+  const dlE = document.getElementById("dl-empaques");
   if(dlN) dlN.innerHTML = [...nombres].sort((a,b)=>a.localeCompare(b)).map(n=>`<option value="${esc(n)}">`).join("");
   if(dlP) dlP.innerHTML = [...proveedores].sort((a,b)=>a.localeCompare(b)).map(p=>`<option value="${esc(p)}">`).join("");
+  if(dlE){
+    const listEmp = empaques.size > 0 ? [...empaques] : [...nombres];
+    dlE.innerHTML = listEmp.sort((a,b)=>a.localeCompare(b)).map(n=>`<option value="${esc(n)}">`).join("");
+  }
 }
 
 function openViewNewTab(viewName){
@@ -4049,7 +4076,8 @@ function rememberPrice(nombre, inci, precio, unidadCosto, densidadMP, proveedor,
   const uStock = actualUStock || existing.unidadStock || unidadCosto || "g";
 
   const entry = {
-    _isCatalog: Boolean(isCatalog || existing._isCatalog),
+    _isCatalog: Boolean(isCatalog || existing._isCatalog || existing.esOficial),
+    esOficial: Boolean(isCatalog || existing._isCatalog || existing.esOficial),
     sku: actualSKU || existing.sku || generateSKU(cleanNombre || cleanInci, fase || existing.fase, unidadCosto || uStock),
     nombre: cleanNombre || existing.nombre || cleanInci,
     inci: cleanInci || existing.inci || "",
@@ -4168,7 +4196,6 @@ function showView(name){
   if(name==="categories") renderCatsView();
   if(name==="settings"){ renderKeyStatus(); loadErpConfigToUI(); }
   if(name==="ingredientsdb"){
-    if(typeof depurarInsumosFantasma === "function") depurarInsumosFantasma(true);
     renderIngredientsDB();
   }
 }
@@ -4643,19 +4670,19 @@ function addPresentation(data){
     <div class="pres-kit-body" style="display:${hasKit ? 'grid' : 'none'};grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-top:8px;padding:8px;background:var(--surface);border-radius:6px;border:1px dashed var(--border)">
       <div>
         <label style="font-size:10px;color:var(--muted);font-weight:600;display:block;margin-bottom:2px">🍶 Envase / Frasco</label>
-        <input class="input pres-envase" list="dl-ing-nombres" placeholder="ej: Frasco Ámbar 30ml" value="${esc(data?.envase||'')}" oninput="updateCosts(); updateKitBadge(this)">
+        <input class="input pres-envase" list="dl-empaques" placeholder="ej: Frasco Vidrio Ámbar 50 mL Gotero" value="${esc(data?.envase||'')}" oninput="updateCosts(); updateKitBadge(this)">
       </div>
       <div>
         <label style="font-size:10px;color:var(--muted);font-weight:600;display:block;margin-bottom:2px">💧 Tapa / Gotero</label>
-        <input class="input pres-tapa" list="dl-ing-nombres" placeholder="ej: Gotero Pipeta 30ml" value="${esc(data?.tapa||'')}" oninput="updateCosts(); updateKitBadge(this)">
+        <input class="input pres-tapa" list="dl-empaques" placeholder="ej: Gotero Pipeta 50ml" value="${esc(data?.tapa||'')}" oninput="updateCosts(); updateKitBadge(this)">
       </div>
       <div>
         <label style="font-size:10px;color:var(--muted);font-weight:600;display:block;margin-bottom:2px">🏷️ Etiqueta / Sticker</label>
-        <input class="input pres-etiqueta" list="dl-ing-nombres" placeholder="ej: Etiqueta Adhesiva 30ml" value="${esc(data?.etiqueta||'')}" oninput="updateCosts(); updateKitBadge(this)">
+        <input class="input pres-etiqueta" list="dl-empaques" placeholder="ej: Etiqueta Adhesiva 50ml" value="${esc(data?.etiqueta||'')}" oninput="updateCosts(); updateKitBadge(this)">
       </div>
       <div>
         <label style="font-size:10px;color:var(--muted);font-weight:600;display:block;margin-bottom:2px">📦 Caja / Empaque</label>
-        <input class="input pres-caja" list="dl-ing-nombres" placeholder="ej: Caja Plegadiza 30ml" value="${esc(data?.caja||'')}" oninput="updateCosts(); updateKitBadge(this)">
+        <input class="input pres-caja" list="dl-empaques" placeholder="ej: Caja Plegadiza 50ml" value="${esc(data?.caja||'')}" oninput="updateCosts(); updateKitBadge(this)">
       </div>
     </div>`;
   document.getElementById("presentations-list").appendChild(row);
@@ -6603,7 +6630,6 @@ applyTheme(localStorage.getItem("formulab_theme")||"dark");
 // INIT
 // ═══════════════════════════════════════════════
 persist(); renderCards(); checkApiBanner(); renderKeyStatus();
-if(typeof depurarInsumosFantasma === "function") depurarInsumosFantasma(true);
 
 // Autoguardado: cualquier cambio dentro del editor de fórmulas
 // (inputs, selects, textareas, y clics que agregan/quitan filas,
@@ -6838,13 +6864,32 @@ if(typeof depurarInsumosFantasma === "function") depurarInsumosFantasma(true);
 
       formulas = Array.from(remoteMap.values());
       categories = remoteCats.length ? remoteCats : categories;
-      priceDB = Object.assign({}, remotePriceDB, priceDB);
+      
+      // Smart Merge priceDB: nunca destruir insumos locales de catálogo o más recientes
+      let hadLocalNewerPrice = false;
+      const mergedPriceDB = Object.assign({}, remotePriceDB);
+      Object.entries(priceDB).forEach(([k, localP]) => {
+        if(!localP || typeof localP !== "object") return;
+        const remoteP = mergedPriceDB[k];
+        if(!remoteP){
+          mergedPriceDB[k] = localP;
+          hadLocalNewerPrice = true;
+        } else {
+          const localTs = localP.ts || 0;
+          const remoteTs = remoteP.ts || 0;
+          if(localTs >= remoteTs || localP._isCatalog){
+            mergedPriceDB[k] = Object.assign({}, remoteP, localP);
+            if(localTs > remoteTs) hadLocalNewerPrice = true;
+          }
+        }
+      });
+      priceDB = mergedPriceDB;
       repairGhostAliases(priceDB);
 
       lastRemoteFormulaCount = formulas.length;
 
-      if(hadLocalNewer){
-        console.log("Preservadas fórmulas locales más recientes tras refresco. Sincronizando con la nube...");
+      if(hadLocalNewer || hadLocalNewerPrice){
+        console.log("Preservados datos locales más recientes tras refresco. Sincronizando con la nube...");
         scheduleFirestoreSync();
       }
     } else {
@@ -6861,7 +6906,6 @@ if(typeof depurarInsumosFantasma === "function") depurarInsumosFantasma(true);
     persistPriceDB();
     if(typeof renderCards === "function") renderCards();
     if(typeof refreshAutocompleteLists === "function") refreshAutocompleteLists();
-    if(typeof depurarInsumosFantasma === "function") depurarInsumosFantasma(true);
     setSaveStatus(`Sincronizado ✓ (${formulas.length} fórmulas)`, "ok");
     // Recordatorio de respaldo periódico (sin descarga automática forzada)
     if(typeof checkBackupReminder === "function") checkBackupReminder();
