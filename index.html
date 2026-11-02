@@ -704,33 +704,37 @@ select.input{cursor:pointer;appearance:none;
       <!-- Other costs -->
       <div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-          <span style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em">Otros costos</span>
+          <span style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em">Otros costos fijos del lote (Opcional — mano de obra, análisis)</span>
           <button class="btn btn-ghost btn-sm" onclick="addOtherCost()">+ Agregar costo</button>
         </div>
         <div id="other-costs-list" style="display:flex;flex-direction:column;gap:6px"></div>
+        <div id="other-costs-pkg-warning" style="display:none;font-size:11.5px;color:var(--warn);background:rgba(240,200,74,.12);border:1px solid var(--warn);border-radius:6px;padding:8px 12px;margin-top:6px"></div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">💡 Aplica a costos globales de elaboración por lote (ej: mano de obra, análisis microbiológico). Para frascos, tapas, etiquetas y cajas, usa <strong>Presentaciones del producto</strong> abajo para evitar duplicidad.</div>
       </div>
 
       <!-- Presentations -->
       <div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-          <span style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em">Presentaciones del producto</span>
+          <span style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em">Presentaciones del producto (Costeo de Producto Terminado)</span>
           <button class="btn btn-ghost btn-sm" onclick="addPresentation()">+ Agregar presentación</button>
         </div>
         <div id="presentations-list" style="display:flex;flex-direction:column;gap:6px"></div>
-        <div style="font-size:11px;color:var(--muted);margin-top:4px">Agrega tamaños (ej: 60 g, 120 mL) para ver el costo y PVP por unidad.</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">Agrega tamaños (ej: 50 mL, 100 g) y asocia su envase, gotero/tapa, etiqueta y caja con el botón <strong>📦 Empaque</strong> para calcular su costo exacto y PVP.</div>
       </div>
 
       <!-- Summary boxes -->
       <div class="cost-summary" id="cost-summary">
         <div class="cost-box"><div class="cost-box-label">Costo MP</div><div class="cost-box-val" id="cs-mp">—</div><div class="cost-box-sub">por lote</div></div>
-        <div class="cost-box"><div class="cost-box-label">Costo total</div><div class="cost-box-val" id="cs-oh">—</div><div class="cost-box-sub">MP + otros + overhead</div></div>
-        <div class="cost-box"><div class="cost-box-label">Costo / 100g</div><div class="cost-box-val" id="cs-100">—</div><div class="cost-box-sub">referencia</div></div>
-        <div class="cost-box"><div class="cost-box-label">PVP / 100g</div><div class="cost-box-val" id="cs-pvp">—</div><div class="cost-box-sub" id="cs-pvp-sub">con margen</div></div>
+        <div class="cost-box"><div class="cost-box-label">Costo total lote</div><div class="cost-box-val" id="cs-oh">—</div><div class="cost-box-sub">granel + otros fijos</div></div>
+        <div class="cost-box"><div class="cost-box-label">Costo granel / 100g</div><div class="cost-box-val" id="cs-100">—</div><div class="cost-box-sub">referencia masa pura</div></div>
+        <div class="cost-box"><div class="cost-box-label">PVP granel / 100g</div><div class="cost-box-val" id="cs-pvp">—</div><div class="cost-box-sub" id="cs-pvp-sub">con margen</div></div>
       </div>
       <!-- Presentations summary -->
-      <div id="presentations-summary" style="display:none">
-        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px">Costo y PVP por presentación</div>
-        <div id="presentations-summary-body" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px"></div>
+      <div id="presentations-summary" style="display:none;margin-top:14px;background:var(--surface2);padding:12px;border-radius:8px;border:1px solid var(--border)">
+        <div style="font-size:11px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px">
+          📦 Costo y PVP de Producto Terminado (Por Presentación)
+        </div>
+        <div id="presentations-summary-body" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px"></div>
       </div>
 
       <div style="font-size:11px;color:var(--muted)">
@@ -1659,10 +1663,17 @@ function getPreloadedDensity(nombre, inci){
   return null;
 }
 
-function generateSKU(nombre, fase){
+function generateSKU(nombre, fase, unidad){
   if(!nombre) return "MP-0000";
   const clean = nombre.normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-  const prefix = fase ? ("MP-" + fase.charAt(0).toUpperCase()) : "MP-X";
+  let prefix = "MP-X";
+  if(unidad === 'u' || unidad === 'pza' || clean.includes("FRASCO") || clean.includes("BOTELLA") || clean.includes("POTE") || clean.includes("GOTERO") || clean.includes("TAPA") || clean.includes("VALVULA") || clean.includes("ETIQ") || clean.includes("STICKER") || clean.includes("CAJA") || clean.includes("ESTUCHE")){
+    prefix = "EMP";
+  } else if(fase){
+    prefix = "MP-" + fase.charAt(0).toUpperCase();
+  } else {
+    prefix = "INS";
+  }
   let hash = 0;
   for(let i=0; i<clean.length; i++){
     hash = ((hash << 5) - hash) + clean.charCodeAt(i);
@@ -1994,6 +2005,35 @@ function buildIngredientsIndex(){
         e.ts = f.ts || 0;
       }
       if(f.nombre) e.formulas.add(f.nombre);
+    });
+
+    // Escanear componentes de empaque en las presentaciones de la fórmula
+    (f.presentaciones || []).forEach(pres => {
+      ['envase', 'tapa', 'etiqueta', 'caja'].forEach(comp => {
+        const compName = (pres[comp] || "").trim();
+        if(!compName) return;
+        const kComp = priceKey(compName);
+        if(!kComp) return;
+        if(!idx[kComp]){
+          idx[kComp] = {
+            sku: generateSKU(compName, "", "u"),
+            nombre: compName,
+            inci: "",
+            fase: "Empaque",
+            proveedores: new Set(),
+            precio: null,
+            unidad: "u",
+            densidadMP: null,
+            stock: 0,
+            stockMin: 0,
+            unidadStock: "u",
+            ts: 0,
+            formulas: new Set(),
+            _isFormulaOnly: true
+          };
+        }
+        if(f.nombre) idx[kComp].formulas.add(f.nombre);
+      });
     });
   });
 
@@ -2416,7 +2456,7 @@ async function guardarInsumoModal(){
     applyIngredientRename_noRerender(editKey, nombre);
   }
   
-  rememberPrice(nombre, inci, precio, unidad, dens, proveedor, fase, sku, stock, stockMin, unidadStock);
+  rememberPrice(nombre, inci, precio, unidad, dens, proveedor, fase, sku, stock, stockMin, unidadStock, true);
   
   // Propagación automática del nuevo precio hacia todas las fórmulas que usan este insumo
   const propRes = propagateIngredientPriceToFormulas(editKey || nombre, precio, unidad, dens, inci, nombre);
@@ -2905,16 +2945,20 @@ async function depurarInsumosFantasma(silent = false){
   const beforeIdx = buildIngredientsIndex();
   const totalBefore = Object.keys(beforeIdx).length;
 
-  // 1. Identificar insumos canónicos oficiales (aquellos con SKU real del ERP o con stock físico > 0)
+  // 1. Identificar insumos canónicos oficiales (aquellos registrados en catálogo, con precio, empaques, con SKU real o stock > 0)
   const canonMap = new Map();
   const canonByName = new Map();
   const canonByInci = new Map();
 
   Object.entries(priceDB).forEach(([k, p]) => {
     if(!p || typeof p !== "object" || p._isAlias) return;
-    const hasRealSku = p.sku && !p.sku.startsWith("MP-X");
-    const hasStock = p.stock !== undefined && p.stock !== null && parseFloat(p.stock) > 0;
-    if(hasRealSku || hasStock){
+    const isCatalog = Boolean(p._isCatalog || p.esOficial);
+    const hasPrice = (p.precio !== null && p.precio !== undefined && parseFloat(p.precio) > 0);
+    const hasStock = (p.stock !== undefined && p.stock !== null && parseFloat(p.stock) > 0);
+    const isPackaging = (p.unidad === 'u' || p.unidadCosto === 'u' || p.unidadStock === 'u' || (p.sku && p.sku.startsWith("EMP-")));
+    const hasRealSku = (p.sku && !p.sku.startsWith("MP-X"));
+
+    if(isCatalog || hasPrice || hasStock || isPackaging || hasRealSku){
       canonMap.set(k, p);
       if(p.nombre) canonByName.set(priceKey(p.nombre), { key: k, item: p });
       if(p.inci){
@@ -2973,12 +3017,25 @@ async function depurarInsumosFantasma(silent = false){
       delete priceDB[k];
       unificados++;
     } else {
-      // Si tiene stock 0 y no está en ninguna fórmula (huérfano puro)
-      const countEnFormulas = formulas.reduce((acc, f) => {
-        return acc + (f.ingredientes || []).filter(i => priceKey(i.nombre) === kNom).length;
-      }, 0);
+      // Verificar si está en uso en ingredientes O en empaques de presentaciones
+      let countEnUso = 0;
+      formulas.forEach(f => {
+        (f.ingredientes || []).forEach(i => {
+          if(priceKey(i.nombre) === kNom || (i.inci && cleanInciKey(i.inci) === kInci)) countEnUso++;
+        });
+        (f.presentaciones || []).forEach(pres => {
+          ['envase', 'tapa', 'etiqueta', 'caja'].forEach(comp => {
+            if(pres[comp] && priceKey(pres[comp]) === kNom) countEnUso++;
+          });
+        });
+      });
 
-      if(countEnFormulas === 0 && (!p.stock || parseFloat(p.stock) <= 0) && (!p.sku || p.sku.startsWith("MP-X"))){
+      const isCatalog = Boolean(p._isCatalog || p.esOficial);
+      const hasPrice = (p.precio !== null && p.precio !== undefined && parseFloat(p.precio) > 0);
+      const hasStock = (p.stock !== undefined && p.stock !== null && parseFloat(p.stock) > 0);
+      const isPackaging = (p.unidad === 'u' || p.unidadCosto === 'u' || p.unidadStock === 'u' || (p.sku && p.sku.startsWith("EMP-")));
+
+      if(!isCatalog && !hasPrice && !hasStock && !isPackaging && countEnUso === 0 && (!p.sku || p.sku.startsWith("MP-X"))){
         delete priceDB[k];
         purgados++;
       }
@@ -3801,10 +3858,17 @@ function switchReconcileTab(tab){
 
 function refreshAutocompleteLists(){
   const nombres = new Set(), proveedores = new Set();
-  formulas.forEach(f=>(f.ingredientes||[]).forEach(i=>{
-    if(i.nombre && i.nombre.trim()) nombres.add(i.nombre.trim());
-    if(i.proveedor && i.proveedor.trim()) proveedores.add(i.proveedor.trim());
-  }));
+  formulas.forEach(f=>{
+    (f.ingredientes||[]).forEach(i=>{
+      if(i.nombre && i.nombre.trim()) nombres.add(i.nombre.trim());
+      if(i.proveedor && i.proveedor.trim()) proveedores.add(i.proveedor.trim());
+    });
+    (f.presentaciones||[]).forEach(p=>{
+      ['envase', 'tapa', 'etiqueta', 'caja'].forEach(comp => {
+        if(p[comp] && p[comp].trim()) nombres.add(p[comp].trim());
+      });
+    });
+  });
   Object.values(priceDB).forEach(p=>{
     if(p && p.nombre && p.nombre.trim()) nombres.add(p.nombre.trim());
     if(p && p.proveedor && p.proveedor.trim()) proveedores.add(p.proveedor.trim());
@@ -3920,7 +3984,7 @@ Responde en español, corto y directo (máx. 4-5 líneas salvo que pidan más de
 
 
 // Registra/actualiza el precio y densidad de un ingrediente en la base global
-function rememberPrice(nombre, inci, precio, unidadCosto, densidadMP, proveedor, fase, customSKU, stock, stockMin, unidadStock){
+function rememberPrice(nombre, inci, precio, unidadCosto, densidadMP, proveedor, fase, customSKU, stock, stockMin, unidadStock, isCatalog = false){
   let cleanNombre = (nombre || "").trim();
   const cleanInci = (inci || "").trim();
   if(!cleanNombre && !cleanInci) return;
@@ -3985,7 +4049,8 @@ function rememberPrice(nombre, inci, precio, unidadCosto, densidadMP, proveedor,
   const uStock = actualUStock || existing.unidadStock || unidadCosto || "g";
 
   const entry = {
-    sku: actualSKU || existing.sku || generateSKU(cleanNombre || cleanInci, fase || existing.fase),
+    _isCatalog: Boolean(isCatalog || existing._isCatalog),
+    sku: actualSKU || existing.sku || generateSKU(cleanNombre || cleanInci, fase || existing.fase, unidadCosto || uStock),
     nombre: cleanNombre || existing.nombre || cleanInci,
     inci: cleanInci || existing.inci || "",
     fase: (fase && fase.trim()) || existing.fase || "",
@@ -4359,6 +4424,7 @@ function populateCatSelect(){
 // ═══════════════════════════════════════════════
 function openEditor(id){
   clearTimeout(autosaveTimer);
+  refreshAutocompleteLists();
   const ind=document.getElementById("autosave-indicator"); if(ind) ind.textContent="";
   editingId=id;
   document.getElementById("editor-title").textContent=id?"Editar fórmula":"Nueva fórmula";
@@ -4539,7 +4605,7 @@ function addOtherCost(data){
   const row = document.createElement("div");
   row.className = "other-cost-row";
   row.innerHTML = `
-    <input class="input" placeholder="Descripción (ej: Envase, Etiqueta, Mano de obra)" value="${data?.desc||''}" oninput="updateCosts()">
+    <input class="input" placeholder="Concepto operativo de lote (ej: Mano de obra, Análisis microbiológico)" value="${esc(data?.desc||'')}" oninput="updateCosts()">
     <input class="input" type="number" min="0" step="any" placeholder="Valor" value="${data?.valor||''}" oninput="updateCosts()" style="font-family:var(--fm)">
     <button class="btn-dsf" onclick="this.closest('.other-cost-row').remove();updateCosts()">✕</button>`;
   document.getElementById("other-costs-list").appendChild(row);
@@ -4682,8 +4748,25 @@ function updateCosts(){
   }
 
   // Sum other costs (per lote)
-  const otherTotal = getOtherCosts().reduce((s,o)=>s+o.valor,0);
+  const otherCostsList = getOtherCosts();
+  const otherTotal = otherCostsList.reduce((s,o)=>s+o.valor,0);
   if(otherTotal>0) hasAnyCost=true;
+
+  // Detección de posibles empaques en "Otros Costos" para prevenir duplicidad
+  const pkgKeywords = ["frasco", "envase", "botella", "pote", "tapa", "gotero", "valvula", "etiqueta", "sticker", "caja", "estuche", "tubo"];
+  const detectedPkg = otherCostsList.filter(o => {
+    const d = (o.desc||"").toLowerCase();
+    return pkgKeywords.some(k => d.includes(k));
+  });
+  const dupWarnEl = document.getElementById("other-costs-pkg-warning");
+  if(dupWarnEl){
+    if(detectedPkg.length > 0){
+      dupWarnEl.style.display = "block";
+      dupWarnEl.innerHTML = `⚠️ <strong>Posible duplicidad de empaque:</strong> Tienes conceptos de empaque en esta sección (<em>${detectedPkg.map(x=>esc(x.desc)).join(", ")}</em>). Si también los configuras en <strong>Presentaciones del producto</strong> abajo, su costo se sumará dos veces. Se recomienda dejar esta sección solo para mano de obra o costos operativos del lote.`;
+    } else {
+      dupWarnEl.style.display = "none";
+    }
+  }
 
   if(!hasAnyCost){
     ["cs-mp","cs-oh","cs-100","cs-pvp"].forEach(id=>{ const el=document.getElementById(id); if(el)el.textContent="—"; });
@@ -4734,11 +4817,19 @@ function updateCosts(){
       const costoPres  = costoBulk + costoEmpaque;
       const pvpPres    = costoPres / (1-margen);
       const hasEmpaque = costoEmpaque > 0;
-      return `<div class="pres-summary-box">
-        <div class="cost-box-label">${esc(p.nombre||p.cantidad+" "+p.unidad)} · ${p.cantidad} ${p.unidad}</div>
-        <div class="cost-box-val">${fmtMoney(costoPres)}</div>
-        <div class="cost-box-sub">PVP: ${fmtMoney(pvpPres)}</div>
-        ${hasEmpaque ? `<div style="font-size:10px;color:var(--muted);margin-top:3px">Granel: ${fmtMoney(costoBulk)} · Empaque: ${fmtMoney(costoEmpaque)}</div>` : ''}
+      return `<div class="pres-summary-box" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:4px">
+        <div class="cost-box-label" style="font-weight:700;color:var(--text);font-size:12px">${esc(p.nombre||p.cantidad+" "+p.unidad)} (${p.cantidad} ${p.unidad})</div>
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:4px">
+          <span style="font-size:11px;color:var(--muted)">Costo Unitario:</span>
+          <span class="cost-box-val" style="font-size:15px;font-weight:700;color:var(--accent)">${fmtMoney(costoPres)}</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:baseline">
+          <span style="font-size:11px;color:var(--muted)">PVP Sugerido:</span>
+          <span style="font-size:14px;font-weight:700;color:var(--ok);font-family:var(--fm)">${fmtMoney(pvpPres)}</span>
+        </div>
+        <div style="font-size:10.5px;color:var(--muted);margin-top:4px;border-top:1px dashed var(--border);padding-top:4px">
+          Granel: <strong>${fmtMoney(costoBulk)}</strong> ${hasEmpaque ? `· Empaque: <strong>${fmtMoney(costoEmpaque)}</strong>` : ''}
+        </div>
       </div>`;
     }).join("");
   } else {
