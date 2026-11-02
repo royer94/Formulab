@@ -1157,6 +1157,7 @@ select.input{cursor:pointer;appearance:none;
             <option value="mg">/ mg (miligramo)</option>
             <option value="mL">/ mL (mililitro)</option>
             <option value="uL">/ uL (microlitro)</option>
+            <option value="u">/ u (unidad / pieza)</option>
           </select>
         </div>
       </div>
@@ -1179,6 +1180,7 @@ select.input{cursor:pointer;appearance:none;
             <option value="kg">kg (kilogramos)</option>
             <option value="mL">mL (mililitros)</option>
             <option value="L">L (litros)</option>
+            <option value="u">u (unidades / piezas)</option>
           </select>
         </div>
       </div>
@@ -1241,6 +1243,7 @@ select.input{cursor:pointer;appearance:none;
             <option value="kg">kg (kilogramos)</option>
             <option value="mL">mL (mililitros)</option>
             <option value="L">L (litros)</option>
+            <option value="u">u (unidades / piezas)</option>
           </select>
         </div>
       </div>
@@ -1459,6 +1462,24 @@ select.input{cursor:pointer;appearance:none;
           <input class="input" id="bmr-verificador" placeholder="Director Técnico / QA">
         </div>
       </div>
+
+      <!-- SECCIÓN ACONDICIONAMIENTO Y PRESENTACIÓN -->
+      <div class="lote-packaging-bar" style="display:grid;grid-template-columns:2fr 1fr 2fr;gap:10px;margin-bottom:12px;background:var(--surface2);padding:12px;border-radius:8px;border:1px solid var(--border)">
+        <div>
+          <label class="fl">📦 Presentación a Envasar</label>
+          <select class="input" id="lote-pres-select" onchange="renderLote()"></select>
+        </div>
+        <div>
+          <label class="fl">Merma / Proceso (%)</label>
+          <input class="input" type="number" id="lote-merma" value="5" min="0" max="50" step="0.5" oninput="renderLote()" style="font-family:var(--fm)">
+        </div>
+        <div>
+          <label class="fl">Rendimiento Estimado</label>
+          <div id="lote-yield-display" style="padding:6px 10px;font-size:12px;font-weight:600;background:var(--surface);border-radius:6px;border:1px solid var(--border);color:var(--accent);min-height:36px;display:flex;align-items:center">
+            —
+          </div>
+        </div>
+      </div>
       <div class="tab-row">
         <button class="tab active" onclick="switchTab('lote','cantidades',this)">Cantidades</button>
         <button class="tab" onclick="switchTab('lote','procedimiento',this)">Procedimiento</button>
@@ -1663,6 +1684,12 @@ function toGramos(cant, unidad, dens){
     case 'L':  return c * 1000 * d;
     case 'mL': return c * d;
     case 'uL': return (c * d) / 1000;
+    case 'u':
+    case 'pza':
+    case 'und':
+    case 'piezas':
+    case 'unidades':
+      return c;
     default:   return c;
   }
 }
@@ -1677,6 +1704,12 @@ function fromGramos(gramos, unidad, dens){
     case 'L':  return (g / d) / 1000;
     case 'mL': return g / d;
     case 'uL': return (g / d) * 1000;
+    case 'u':
+    case 'pza':
+    case 'und':
+    case 'piezas':
+    case 'unidades':
+      return g;
     default:   return g;
   }
 }
@@ -2208,7 +2241,19 @@ function recalculateFormulaCosts(f){
     f.presentaciones = f.presentaciones.map(p => {
       const cant = parseFloat(p.cantidad) || 0;
       const factor = toGrams[p.unidad] || 1;
-      const c = Math.round(costoPorG * cant * factor);
+      const costoBulk = costoPorG * cant * factor;
+      let costoEmpaque = 0;
+      ['envase', 'tapa', 'etiqueta', 'caja'].forEach(comp => {
+        const compName = p[comp];
+        if(compName){
+          const k = priceKey(compName);
+          const item = priceDB[k];
+          if(item && item.precio > 0){
+            costoEmpaque += parseFloat(item.precio);
+          }
+        }
+      });
+      const c = Math.round(costoBulk + costoEmpaque);
       const v = margen < 1 ? Math.round(c / (1 - margen)) : c;
       return {
         ...p,
@@ -4005,6 +4050,10 @@ function costoAGramo(precio, unidad, densidadMP){
     case 'mg': return precio * 1000;
     case 'mL': return precio / d;
     case 'uL': return (precio * 1000) / d;
+    case 'u':
+    case 'pza':
+    case 'und':
+      return precio;
     default:   return precio;
   }
 }
@@ -4508,21 +4557,84 @@ const PRES_UNITS = ["g","mL","oz","kg","L"];
 
 function addPresentation(data){
   const row = document.createElement("div");
-  row.className = "pres-row";
+  row.className = "pres-item-card";
+  row.style.cssText = "background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:6px";
+  
+  const hasKit = Boolean(data?.envase || data?.tapa || data?.etiqueta || data?.caja);
+
   row.innerHTML = `
-    <input class="input" placeholder="Nombre presentación (ej: Tamaño viaje, Familiar)" value="${data?.nombre||''}" oninput="updateCosts()">
-    <input class="input" type="number" min="0.1" step="any" placeholder="Cant." value="${data?.cantidad||''}" oninput="updateCosts()" style="font-family:var(--fm)">
-    <select class="input" onchange="updateCosts()">
-      ${PRES_UNITS.map(u=>`<option value="${u}"${(data?.unidad||'g')===u?' selected':''}>${u}</option>`).join('')}
-    </select>
-    <button class="btn-dsf" onclick="this.closest('.pres-row').remove();updateCosts()">✕</button>`;
+    <div class="pres-row" style="display:grid;grid-template-columns:2fr 80px 70px auto auto;gap:6px;align-items:center">
+      <input class="input pres-nombre" placeholder="Nombre presentación (ej: Frasco Gotero)" value="${esc(data?.nombre||'')}" oninput="updateCosts()">
+      <input class="input pres-cant" type="number" min="0.1" step="any" placeholder="Cant." value="${data?.cantidad||''}" oninput="updateCosts()" style="font-family:var(--fm)">
+      <select class="input pres-unit" onchange="updateCosts()">
+        ${PRES_UNITS.map(u=>`<option value="${u}"${(data?.unidad||'g')===u?' selected':''}>${u}</option>`).join('')}
+      </select>
+      <button type="button" class="btn btn-ghost btn-sm btn-toggle-kit" onclick="togglePresKit(this)" title="Asignar envase, tapa, etiqueta y caja" style="font-size:11px;padding:4px 8px;white-space:nowrap;${hasKit?'color:var(--accent);font-weight:600':''}">
+        ${hasKit ? '📦 Empaque ✓' : '📦 Empaque'}
+      </button>
+      <button type="button" class="btn-dsf" onclick="this.closest('.pres-item-card').remove();updateCosts()" title="Eliminar presentación">✕</button>
+    </div>
+    <div class="pres-kit-body" style="display:${hasKit ? 'grid' : 'none'};grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-top:8px;padding:8px;background:var(--surface);border-radius:6px;border:1px dashed var(--border)">
+      <div>
+        <label style="font-size:10px;color:var(--muted);font-weight:600;display:block;margin-bottom:2px">🍶 Envase / Frasco</label>
+        <input class="input pres-envase" list="dl-ing-nombres" placeholder="ej: Frasco Ámbar 30ml" value="${esc(data?.envase||'')}" oninput="updateCosts(); updateKitBadge(this)">
+      </div>
+      <div>
+        <label style="font-size:10px;color:var(--muted);font-weight:600;display:block;margin-bottom:2px">💧 Tapa / Gotero</label>
+        <input class="input pres-tapa" list="dl-ing-nombres" placeholder="ej: Gotero Pipeta 30ml" value="${esc(data?.tapa||'')}" oninput="updateCosts(); updateKitBadge(this)">
+      </div>
+      <div>
+        <label style="font-size:10px;color:var(--muted);font-weight:600;display:block;margin-bottom:2px">🏷️ Etiqueta / Sticker</label>
+        <input class="input pres-etiqueta" list="dl-ing-nombres" placeholder="ej: Etiqueta Adhesiva 30ml" value="${esc(data?.etiqueta||'')}" oninput="updateCosts(); updateKitBadge(this)">
+      </div>
+      <div>
+        <label style="font-size:10px;color:var(--muted);font-weight:600;display:block;margin-bottom:2px">📦 Caja / Empaque</label>
+        <input class="input pres-caja" list="dl-ing-nombres" placeholder="ej: Caja Plegadiza 30ml" value="${esc(data?.caja||'')}" oninput="updateCosts(); updateKitBadge(this)">
+      </div>
+    </div>`;
   document.getElementById("presentations-list").appendChild(row);
 }
 
+function togglePresKit(btn){
+  const card = btn.closest('.pres-item-card');
+  if(!card) return;
+  const body = card.querySelector('.pres-kit-body');
+  if(!body) return;
+  const isHidden = (body.style.display === 'none');
+  body.style.display = isHidden ? 'grid' : 'none';
+  btn.style.color = isHidden ? 'var(--accent)' : '';
+}
+
+function updateKitBadge(input){
+  const card = input.closest('.pres-item-card');
+  if(!card) return;
+  const btn = card.querySelector('.btn-toggle-kit');
+  if(!btn) return;
+  const hasK = Boolean(card.querySelector('.pres-envase')?.value.trim() || card.querySelector('.pres-tapa')?.value.trim() || card.querySelector('.pres-etiqueta')?.value.trim() || card.querySelector('.pres-caja')?.value.trim());
+  btn.textContent = hasK ? '📦 Empaque ✓' : '📦 Empaque';
+  btn.style.color = hasK ? 'var(--accent)' : '';
+  btn.style.fontWeight = hasK ? '600' : 'normal';
+}
+
 function getPresentations(){
+  const cards = document.querySelectorAll("#presentations-list .pres-item-card");
+  if(cards.length > 0){
+    return [...cards].map(card=>{
+      const inputs = card.querySelectorAll("input");
+      const sels = card.querySelectorAll("select");
+      const nombre = card.querySelector(".pres-nombre")?.value.trim() || inputs[0]?.value.trim() || "";
+      const cantidad = parseFloat(card.querySelector(".pres-cant")?.value || inputs[1]?.value) || 0;
+      const unidad = card.querySelector(".pres-unit")?.value || sels[0]?.value || "g";
+      const envase = card.querySelector(".pres-envase")?.value.trim() || "";
+      const tapa = card.querySelector(".pres-tapa")?.value.trim() || "";
+      const etiqueta = card.querySelector(".pres-etiqueta")?.value.trim() || "";
+      const caja = card.querySelector(".pres-caja")?.value.trim() || "";
+      return { nombre, cantidad, unidad, envase, tapa, etiqueta, caja };
+    }).filter(p=>p.cantidad>0);
+  }
   return [...document.querySelectorAll("#presentations-list .pres-row")].map(r=>{
     const inputs = r.querySelectorAll("input");
-    return {nombre:inputs[0].value.trim(), cantidad:parseFloat(inputs[1].value)||0, unidad:r.querySelector("select").value};
+    return {nombre:inputs[0]?.value.trim()||"", cantidad:parseFloat(inputs[1]?.value)||0, unidad:r.querySelector("select")?.value||"g"};
   }).filter(p=>p.cantidad>0);
 }
 
@@ -4601,17 +4713,32 @@ function updateCosts(){
   const summBody = document.getElementById("presentations-summary-body");
   if(presos.length && hasAnyCost){
     summDiv.style.display="block";
+    const idx = (typeof buildIngredientsIndex === "function") ? buildIngredientsIndex() : {};
     summBody.innerHTML = presos.map(p=>{
       // Unidades de masa (g/oz/kg) son fijas; mL/L usan la densidad de la fórmula
       const densidad = parseFloat(document.getElementById("f-densidad")?.value)||1;
       const toGrams = {g:1, oz:28.35, kg:1000, mL:densidad, L:1000*densidad};
       const gEq = p.cantidad * (toGrams[p.unidad]||1);
-      const costoPres  = costoPorG * gEq;
+      const costoBulk  = costoPorG * gEq;
+      let costoEmpaque = 0;
+      ['envase', 'tapa', 'etiqueta', 'caja'].forEach(comp => {
+        const compName = p[comp];
+        if(compName){
+          const k = priceKey(compName);
+          const item = idx[k] || priceDB[k];
+          if(item && item.precio > 0){
+            costoEmpaque += parseFloat(item.precio);
+          }
+        }
+      });
+      const costoPres  = costoBulk + costoEmpaque;
       const pvpPres    = costoPres / (1-margen);
+      const hasEmpaque = costoEmpaque > 0;
       return `<div class="pres-summary-box">
         <div class="cost-box-label">${esc(p.nombre||p.cantidad+" "+p.unidad)} · ${p.cantidad} ${p.unidad}</div>
         <div class="cost-box-val">${fmtMoney(costoPres)}</div>
         <div class="cost-box-sub">PVP: ${fmtMoney(pvpPres)}</div>
+        ${hasEmpaque ? `<div style="font-size:10px;color:var(--muted);margin-top:3px">Granel: ${fmtMoney(costoBulk)} · Empaque: ${fmtMoney(costoEmpaque)}</div>` : ''}
       </div>`;
     }).join("");
   } else {
@@ -4644,11 +4771,29 @@ function computeCostSnapshot(){
   const pres=getPresentations();
   const toGrams={g:1,oz:28.35,kg:1000,mL:fDensidad,L:1000*fDensidad};
   const costoPorG=costoConOH/loteRef;
-  const presentaciones=pres.map(p=>({
-    nombre:p.nombre,cantidad:p.cantidad,unidad:p.unidad,
-    costo:Math.round(costoPorG*p.cantidad*(toGrams[p.unidad]||1)),
-    pvp:Math.round(costoPorG*p.cantidad*(toGrams[p.unidad]||1)/(1-margen))
-  }));
+  const presentaciones=pres.map(p=>{
+    const cant = parseFloat(p.cantidad) || 0;
+    const factor = toGrams[p.unidad] || 1;
+    const costoBulk = costoPorG * cant * factor;
+    let costoEmpaque = 0;
+    ['envase', 'tapa', 'etiqueta', 'caja'].forEach(comp => {
+      const compName = p[comp];
+      if(compName){
+        const k = priceKey(compName);
+        const item = priceDB[k];
+        if(item && item.precio > 0){
+          costoEmpaque += parseFloat(item.precio);
+        }
+      }
+    });
+    const costoPres = Math.round(costoBulk + costoEmpaque);
+    const pvpPres = Math.round(costoPres / (1 - margen));
+    return {
+      ...p,
+      costo: costoPres,
+      pvp: pvpPres
+    };
+  });
   return {costoPer100:Math.round(costo100),pvpPer100:Math.round(pvp100),
     presentaciones, otrosCostos:getOtherCosts()};
 }
@@ -4948,8 +5093,31 @@ function copyInci(){
 // ═══════════════════════════════════════════════
 function openLote(id){
   activeFormula=formulas.find(f=>f.id===id);
+  if(!activeFormula) return;
   document.getElementById("lote-title").textContent=`Lote — ${activeFormula.nombre}`;
   document.getElementById("lote-size").value=activeFormula.loteRef||1000;
+
+  // Cargar selector de presentaciones y merma
+  const presSel = document.getElementById("lote-pres-select");
+  if(presSel){
+    const presos = activeFormula.presentaciones || [];
+    let opts = `<option value="none">Solo a granel (sin envasar)</option>`;
+    presos.forEach((p, idx) => {
+      const lbl = p.nombre ? `${p.nombre} (${p.cantidad} ${p.unidad})` : `${p.cantidad} ${p.unidad}`;
+      opts += `<option value="${idx}">${esc(lbl)}</option>`;
+    });
+    presSel.innerHTML = opts;
+    if(presos.length > 0){
+      presSel.value = "0"; // Seleccionar la primera presentación por defecto
+    } else {
+      presSel.value = "none";
+    }
+  }
+  const mermaInput = document.getElementById("lote-merma");
+  if(mermaInput){
+    mermaInput.value = (activeFormula.overhead !== undefined && activeFormula.overhead !== null) ? activeFormula.overhead : 5;
+  }
+
   document.getElementById("proc-text").style.display="none";
   document.getElementById("proc-text").textContent="";
   document.getElementById("proc-loading").style.display="none";
@@ -4975,12 +5143,46 @@ function renderLote(){
   const f = activeFormula;
   if(!f || !f.ingredientes) return;
 
+  const mermaPct = parseFloat(document.getElementById("lote-merma")?.value) || 0;
+  const netBulkG = Math.max(0, g * (1 - (mermaPct / 100)));
+  const presIdx = document.getElementById("lote-pres-select")?.value;
+  const presos = f.presentaciones || [];
+  const selectedPres = (presIdx !== "none" && presos[presIdx]) ? presos[presIdx] : null;
+
+  const fDensidad = parseFloat(f.densidad) || 1.0;
+  const toGramsMap = { g: 1, oz: 28.35, kg: 1000, mL: fDensidad, L: 1000 * fDensidad };
+
+  let unitsToPackage = 0;
+  let sobranteG = 0;
+  let unitWeightG = 0;
+
+  if(selectedPres){
+    unitWeightG = (parseFloat(selectedPres.cantidad) || 0) * (toGramsMap[selectedPres.unidad] || 1);
+    if(unitWeightG > 0){
+      unitsToPackage = Math.floor(netBulkG / unitWeightG);
+      sobranteG = Math.max(0, netBulkG - (unitsToPackage * unitWeightG));
+    }
+  }
+
+  const yieldEl = document.getElementById("lote-yield-display");
+  if(yieldEl){
+    if(selectedPres && unitsToPackage > 0){
+      yieldEl.innerHTML = `<span><strong>${unitsToPackage} u</strong> terminadas (${selectedPres.cantidad} ${selectedPres.unidad})<br><span style="font-size:10.5px;color:var(--muted);font-weight:normal">Merma: ${(g * mermaPct / 100).toFixed(1)}g · Sobrante: ${sobranteG.toFixed(1)}g</span></span>`;
+    } else if(selectedPres){
+      yieldEl.innerHTML = `<span style="color:var(--danger)">Lote insuficiente para 1 unidad (${unitWeightG.toFixed(1)}g req.)</span>`;
+    } else {
+      yieldEl.innerHTML = `<span><strong>${netBulkG.toFixed(1)} g</strong> neto granel<br><span style="font-size:10.5px;color:var(--muted);font-weight:normal">Merma proceso: ${(g * mermaPct / 100).toFixed(1)}g (${mermaPct}%)</span></span>`;
+    }
+  }
+
   const idx = buildIngredientsIndex();
-  let totalCosto = 0;
-  let hasCosts = false;
+  let totalCostoMP = 0;
+  let hasMPCosts = false;
+  let totalCostoEmpaque = 0;
+  let hasEmpaqueCosts = false;
   const faltantes = [];
 
-  let html = "";
+  let html = `<div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">1. Materias Primas Cosméticas (A granel)</div>`;
 
   const renderGroup = (label, ings) => {
     if(!ings.length) return;
@@ -4991,7 +5193,7 @@ function renderLote(){
       const precio = parseFloat(i.precio) || 0;
       const dMP = i.densidadMP || getPreloadedDensity(i.nombre, i.inci) || f.densidad || 1.0;
       const costoIng = precio > 0 ? gr * costoAGramo(precio, i.unidadCosto || "g", dMP) : null;
-      if(costoIng !== null){ totalCosto += costoIng; hasCosts = true; }
+      if(costoIng !== null){ totalCostoMP += costoIng; hasMPCosts = true; }
 
       const key = priceKey(i.nombre || i.inci);
       const raw = idx[key] || {};
@@ -5002,7 +5204,7 @@ function renderLote(){
       const faltaG = Math.max(0, gr - stockGramos);
 
       if(!isSuficiente){
-        faltantes.push({ nombre: i.nombre || i.inci, requerido: gr, disponibleG: stockGramos, falta: faltaG, unidad: uStock });
+        faltantes.push({ nombre: i.nombre || i.inci, requerido: gr, disponibleG: stockGramos, falta: faltaG, unidad: uStock, tipo: "Materia Prima" });
       }
 
       html += `<div class="lote-row" style="display:grid;grid-template-columns:2fr 2fr 45px 75px 85px 85px 70px;gap:6px;align-items:center;font-size:12px;padding:6px 0;border-bottom:1px solid var(--border)">
@@ -5027,13 +5229,103 @@ function renderLote(){
   renderGroup("Sin fase", f.ingredientes.filter(i => !i.fase));
 
   const totPct = f.ingredientes.reduce((s, i) => s + (parseFloat(i.porcentaje) || 0), 0);
-  html += `<div class="lote-total" style="display:grid;grid-template-columns:2fr 2fr 45px 75px 85px 85px 70px;gap:6px;font-size:12px;padding:8px 0;font-weight:700;border-top:2px solid var(--border)">
-    <span>TOTAL LOTE</span><span></span>
+  html += `<div class="lote-total" style="display:grid;grid-template-columns:2fr 2fr 45px 75px 85px 85px 70px;gap:6px;font-size:12px;padding:8px 0;font-weight:700;border-top:2px solid var(--border);margin-bottom:16px">
+    <span>SUBTOTAL MATERIA PRIMA</span><span></span>
     <span style="text-align:center">${totPct.toFixed(2)}%</span>
     <span class="l-g" style="text-align:right">${g.toFixed(2)} g</span>
     <span></span>
-    <span style="text-align:center">${faltantes.length === 0 ? '✓ Completo' : faltantes.length + ' faltante(s)'}</span>
-    <span class="l-cost" style="text-align:right">${hasCosts ? fmtMoney(totalCosto) : "—"}</span>
+    <span></span>
+    <span class="l-cost" style="text-align:right">${hasMPCosts ? fmtMoney(totalCostoMP) : "—"}</span>
+  </div>`;
+
+  // SECCIÓN 2: MATERIALES DE ENVASADO Y ACONDICIONAMIENTO
+  const packagingList = selectedPres ? [
+    { tipo: "Envase / Frasco", nombre: selectedPres.envase, icon: "🍶" },
+    { tipo: "Tapa / Gotero", nombre: selectedPres.tapa, icon: "💧" },
+    { tipo: "Etiqueta / Sticker", nombre: selectedPres.etiqueta, icon: "🏷️" },
+    { tipo: "Caja / Empaque", nombre: selectedPres.caja, icon: "📦" }
+  ].filter(item => item.nombre && item.nombre.trim()) : [];
+
+  if(selectedPres){
+    html += `<div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-top:16px;margin-bottom:8px">
+      2. Materiales de Envasado & Empaque (Acondicionamiento para ${unitsToPackage} unidades)
+    </div>`;
+
+    if(packagingList.length > 0){
+      html += `<div class="fase-group" style="margin-bottom:12px">`;
+      packagingList.forEach(item => {
+        const reqUnits = unitsToPackage;
+        const key = priceKey(item.nombre);
+        const raw = idx[key] || priceDB[key] || {};
+        const stockVal = (raw.stock !== undefined && raw.stock !== null) ? raw.stock : 0;
+        const uStock = raw.unidadStock || raw.unidad || "u";
+        const isSuficiente = (stockVal >= reqUnits);
+        const faltaU = Math.max(0, reqUnits - stockVal);
+
+        if(!isSuficiente){
+          faltantes.push({ nombre: item.nombre, requerido: reqUnits, disponibleG: stockVal, falta: faltaU, unidad: uStock, tipo: item.tipo });
+        }
+
+        const precioUnit = parseFloat(raw.precio) || 0;
+        const costoComp = precioUnit > 0 ? (reqUnits * precioUnit) : null;
+        if(costoComp !== null){ totalCostoEmpaque += costoComp; hasEmpaqueCosts = true; }
+
+        html += `<div class="lote-row" style="display:grid;grid-template-columns:2fr 2fr 45px 75px 85px 85px 70px;gap:6px;align-items:center;font-size:12px;padding:6px 0;border-bottom:1px solid var(--border)">
+          <span style="font-weight:500">${item.icon} ${esc(item.nombre)}</span>
+          <span class="l-inci" style="font-size:10.5px;color:var(--muted)">${esc(item.tipo)}</span>
+          <span style="text-align:center">1 u/u</span>
+          <span class="l-g" style="text-align:right;font-weight:600">${reqUnits} u</span>
+          <span style="text-align:right;font-size:11px;font-family:var(--fm);${!isSuficiente?'color:var(--danger);font-weight:700':''}">${stockVal} ${uStock}</span>
+          <span style="text-align:center">
+            ${isSuficiente
+              ? `<span style="display:inline-block;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600;background:rgba(125,222,82,.15);color:var(--ok)">✓ Disponible</span>`
+              : `<span style="display:inline-block;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600;background:rgba(240,74,122,.15);color:var(--danger)">⚠ Falta ${faltaU} u</span>`
+            }
+          </span>
+          <span class="l-cost" style="text-align:right;font-family:var(--fm)">${costoComp !== null ? fmtMoney(costoComp) : "—"}</span>
+        </div>`;
+      });
+
+      html += `<div class="lote-total" style="display:grid;grid-template-columns:2fr 2fr 45px 75px 85px 85px 70px;gap:6px;font-size:12px;padding:8px 0;font-weight:700;border-top:2px solid var(--border)">
+        <span>SUBTOTAL EMPAQUE</span><span></span>
+        <span></span>
+        <span class="l-g" style="text-align:right">${unitsToPackage} u</span>
+        <span></span>
+        <span></span>
+        <span class="l-cost" style="text-align:right">${hasEmpaqueCosts ? fmtMoney(totalCostoEmpaque) : "—"}</span>
+      </div></div>`;
+    } else {
+      html += `<div style="background:var(--surface2);padding:10px 14px;border-radius:6px;border:1px dashed var(--border);font-size:12px;color:var(--muted);margin-bottom:12px">
+        ℹ Esta presentación no tiene materiales de empaque asociados (frascos, tapas, etiquetas o cajas). Puedes configurarlos en el editor de fórmulas pulsando el botón <strong>📦 Empaque</strong> de cada presentación.
+      </div>`;
+    }
+  }
+
+  // RESUMEN FINANCIERO DEL LOTE
+  const totalLote = totalCostoMP + totalCostoEmpaque;
+  const hasAnyBatchCost = hasMPCosts || hasEmpaqueCosts;
+  const costPerUnit = (unitsToPackage > 0 && hasAnyBatchCost) ? (totalLote / unitsToPackage) : null;
+
+  html += `<div style="margin-top:16px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px">
+    <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px">Resumen de Costos y Rendimiento de Producción</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;text-align:center">
+      <div style="background:var(--surface);padding:8px;border-radius:6px;border:1px solid var(--border)">
+        <div style="font-size:10px;color:var(--muted);text-transform:uppercase">Materia Prima (Granel)</div>
+        <div style="font-size:14px;font-weight:700;color:var(--text);font-family:var(--fm);margin-top:2px">${hasMPCosts ? fmtMoney(totalCostoMP) : '—'}</div>
+      </div>
+      <div style="background:var(--surface);padding:8px;border-radius:6px;border:1px solid var(--border)">
+        <div style="font-size:10px;color:var(--muted);text-transform:uppercase">Materiales de Empaque</div>
+        <div style="font-size:14px;font-weight:700;color:var(--text);font-family:var(--fm);margin-top:2px">${hasEmpaqueCosts ? fmtMoney(totalCostoEmpaque) : (selectedPres ? '$0' : '—')}</div>
+      </div>
+      <div style="background:var(--surface);padding:8px;border-radius:6px;border:1px solid var(--border)">
+        <div style="font-size:10px;color:var(--muted);text-transform:uppercase">Costo Total Producción</div>
+        <div style="font-size:15px;font-weight:700;color:var(--accent);font-family:var(--fm);margin-top:2px">${hasAnyBatchCost ? fmtMoney(totalLote) : '—'}</div>
+      </div>
+      <div style="background:var(--surface);padding:8px;border-radius:6px;border:1px solid var(--border)">
+        <div style="font-size:10px;color:var(--muted);text-transform:uppercase">Costo / Unidad Terminada</div>
+        <div style="font-size:14px;font-weight:700;color:var(--ok);font-family:var(--fm);margin-top:2px">${costPerUnit !== null ? fmtMoney(costPerUnit) : '—'}</div>
+      </div>
+    </div>
   </div>`;
 
   document.getElementById("lote-cantidades-body").innerHTML = html;
@@ -5045,32 +5337,68 @@ function renderLote(){
       banner.innerHTML = `<div style="background:rgba(125,222,82,.12);border:1px solid var(--ok);border-radius:8px;padding:10px 14px;display:flex;align-items:center;gap:10px;font-size:12.5px">
         <span style="font-size:18px">🟢</span>
         <div>
-          <strong style="color:var(--ok)">Inventario Verificado:</strong> Tienes suficiente materia prima en stock para fabricar este lote de <strong>${g} g</strong> sin faltantes.
+          <strong style="color:var(--ok)">Inventario Verificado:</strong> Tienes suficiente materia prima y materiales de empaque en stock para fabricar y acondicionar este lote de <strong>${g} g</strong> (${unitsToPackage > 0 ? unitsToPackage + ' unidades' : 'a granel'}).
         </div>
       </div>`;
     } else {
       banner.innerHTML = `<div style="background:rgba(240,74,122,.12);border:1px solid var(--danger);border-radius:8px;padding:10px 14px;display:flex;align-items:center;gap:10px;font-size:12.5px">
         <span style="font-size:18px">🔴</span>
         <div>
-          <strong style="color:var(--danger)">Stock Insuficiente:</strong> Faltan existencias en <strong>${faltantes.length}</strong> materia(s) prima(s) para este lote de ${g} g. Revisa las cantidades en rojo abajo.
+          <strong style="color:var(--danger)">Stock Insuficiente:</strong> Faltan existencias en <strong>${faltantes.length}</strong> insumo(s) para completar este lote. Revisa las filas en rojo.
         </div>
       </div>`;
     }
   }
+
+  const btnDesc = document.getElementById("btn-descontar-lote");
+  if(btnDesc){
+    btnDesc.textContent = (unitsToPackage > 0 && packagingList.length > 0) ? "📦 Descontar Insumos y Empaque" : "📦 Descontar Insumos del Stock";
+  }
 }
 
-// Descontar materias primas del inventario al fabricar el lote
-function descontarStockLote(){
+// Descontar materias primas y empaque del inventario al fabricar el lote
+async function descontarStockLote(){
   const g = parseFloat(document.getElementById("lote-size")?.value) || 0;
   if(g <= 0) return;
   const f = activeFormula;
   if(!f || !f.ingredientes || !f.ingredientes.length) return;
 
-  if(!confirm(`¿Confirmas la fabricación de este lote de ${g} g de "${f.nombre}"?\n\nSe descontará el consumo real de cada materia prima de tu inventario de insumos.`)){
+  const mermaPct = parseFloat(document.getElementById("lote-merma")?.value) || 0;
+  const netBulkG = Math.max(0, g * (1 - (mermaPct / 100)));
+  const presIdx = document.getElementById("lote-pres-select")?.value;
+  const presos = f.presentaciones || [];
+  const selectedPres = (presIdx !== "none" && presos[presIdx]) ? presos[presIdx] : null;
+
+  const fDensidad = parseFloat(f.densidad) || 1.0;
+  const toGramsMap = { g: 1, oz: 28.35, kg: 1000, mL: fDensidad, L: 1000 * fDensidad };
+
+  let unitsToPackage = 0;
+  if(selectedPres){
+    const unitWeightG = (parseFloat(selectedPres.cantidad) || 0) * (toGramsMap[selectedPres.unidad] || 1);
+    if(unitWeightG > 0){
+      unitsToPackage = Math.floor(netBulkG / unitWeightG);
+    }
+  }
+
+  const packagingList = selectedPres ? [
+    { tipo: "Envase / Frasco", nombre: selectedPres.envase },
+    { tipo: "Tapa / Gotero", nombre: selectedPres.tapa },
+    { tipo: "Etiqueta / Sticker", nombre: selectedPres.etiqueta },
+    { tipo: "Caja / Empaque", nombre: selectedPres.caja }
+  ].filter(item => item.nombre && item.nombre.trim()) : [];
+
+  let confirmMsg = `¿Confirmas la fabricación de este lote de ${g} g de "${f.nombre}"?\n\n`;
+  confirmMsg += `Se descontarán del inventario:\n• ${f.ingredientes.length} materias primas cosméticas (a granel)`;
+  if(packagingList.length > 0 && unitsToPackage > 0){
+    confirmMsg += `\n• ${packagingList.length} insumo(s) de empaque (${unitsToPackage} unidades c/u para presentación "${selectedPres.nombre || (selectedPres.cantidad + ' ' + selectedPres.unidad)}")`;
+  }
+  confirmMsg += `\n\n¿Deseas continuar?`;
+
+  if(!confirm(confirmMsg)){
     return;
   }
 
-  let count = 0;
+  let countMP = 0;
   f.ingredientes.forEach(i => {
     const pct = parseFloat(i.porcentaje) || 0;
     const gr = (pct / 100 * g);
@@ -5092,16 +5420,43 @@ function descontarStockLote(){
     if(kInci && priceDB[kInci] && priceDB[kInci] !== p){
       priceDB[kInci].stock = newStock;
     }
-    count++;
+    countMP++;
   });
 
+  let countEmpaque = 0;
+  if(unitsToPackage > 0 && packagingList.length > 0){
+    packagingList.forEach(item => {
+      const key = priceKey(item.nombre);
+      if(!key) return;
+      if(!priceDB[key]){
+        rememberPrice(item.nombre, "", 0, "u", 1.0, "", "Empaque");
+      }
+      const p = priceDB[key];
+      const curStock = parseFloat(p.stock) || 0;
+      const newStock = Math.max(0, Math.round((curStock - unitsToPackage) * 100) / 100);
+      p.stock = newStock;
+      const kInci = priceKey(p.inci);
+      if(kInci && priceDB[kInci] && priceDB[kInci] !== p){
+        priceDB[kInci].stock = newStock;
+      }
+      countEmpaque++;
+    });
+  }
+
   persistPriceDB();
+  if(typeof window.__forceFirestoreSyncNow === "function"){
+    await window.__forceFirestoreSyncNow();
+  }
   renderLote();
   if(document.getElementById("view-ingredientsdb")?.classList.contains("active")){
     renderIngredientsDB();
   }
 
-  alert(`✓ ¡Fabricación registrada! Se descontaron ${count} materias primas de tu inventario.`);
+  let finalMsg = `✓ ¡Fabricación registrada!\n\nSe descontaron del inventario:\n• ${countMP} materias primas`;
+  if(countEmpaque > 0){
+    finalMsg += `\n• ${countEmpaque} materiales de empaque (${unitsToPackage} u cada uno)`;
+  }
+  alert(finalMsg);
 }
 
 async function generarProcedimiento(){
@@ -5504,6 +5859,30 @@ async function printLote(){
   if(!f) return;
   const g = parseFloat(document.getElementById("lote-size")?.value) || f.loteRef || 1000;
 
+  const mermaPct = parseFloat(document.getElementById("lote-merma")?.value) || (f.overhead !== undefined ? f.overhead : 5);
+  const netBulkG = Math.max(0, g * (1 - (mermaPct / 100)));
+  const presIdx = document.getElementById("lote-pres-select")?.value;
+  const presos = f.presentaciones || [];
+  const selectedPres = (presIdx !== "none" && presos[presIdx]) ? presos[presIdx] : null;
+
+  const fDensidad = parseFloat(f.densidad) || 1.0;
+  const toGramsMap = { g: 1, oz: 28.35, kg: 1000, mL: fDensidad, L: 1000 * fDensidad };
+
+  let unitsToPackage = 0;
+  if(selectedPres){
+    const unitWeightG = (parseFloat(selectedPres.cantidad) || 0) * (toGramsMap[selectedPres.unidad] || 1);
+    if(unitWeightG > 0){
+      unitsToPackage = Math.floor(netBulkG / unitWeightG);
+    }
+  }
+
+  const packagingList = selectedPres ? [
+    { tipo: "Envase / Frasco", nombre: selectedPres.envase },
+    { tipo: "Tapa / Gotero", nombre: selectedPres.tapa },
+    { tipo: "Etiqueta / Sticker", nombre: selectedPres.etiqueta },
+    { tipo: "Caja / Empaque", nombre: selectedPres.caja }
+  ].filter(item => item.nombre && item.nombre.trim()) : [];
+
   // Verificación de stock antes de generar el Batch Record oficial
   const faltantesAlerta = [];
   const idxParaLote = buildIngredientsIndex();
@@ -5518,8 +5897,19 @@ async function printLote(){
     }
   });
 
+  if(unitsToPackage > 0 && packagingList.length > 0){
+    packagingList.forEach(item => {
+      const key = priceKey(item.nombre);
+      const raw = idxParaLote[key] || priceDB[key] || {};
+      const stockU = parseFloat(raw.stock) || 0;
+      if(stockU < unitsToPackage){
+        faltantesAlerta.push(`- 📦 [${item.tipo}] ${item.nombre} (Requerido: ${unitsToPackage} u | En Stock: ${stockU} u)`);
+      }
+    });
+  }
+
   if(faltantesAlerta.length > 0){
-    const proceder = confirm(`⚠ ATENCIÓN - STOCK INSUFICIENTE PARA FABRICACIÓN:\n\nHay ${faltantesAlerta.length} materia(s) prima(s) con existencias menores a las requeridas para este lote:\n\n` +
+    const proceder = confirm(`⚠ ATENCIÓN - STOCK INSUFICIENTE PARA FABRICACIÓN:\n\nHay ${faltantesAlerta.length} insumo(s) con existencias menores a las requeridas para este lote:\n\n` +
       faltantesAlerta.slice(0, 6).join("\n") +
       (faltantesAlerta.length > 6 ? `\n... y ${faltantesAlerta.length - 6} más` : "") +
       `\n\n¿Deseas generar la Hoja de Fabricación de Lote (BMR) de todas formas?`);
@@ -5529,7 +5919,7 @@ async function printLote(){
   const operario = document.getElementById("bmr-operario")?.value.trim() || "Operario Responsable";
   const verificador = document.getElementById("bmr-verificador")?.value.trim() || "Control de Calidad / QA";
   const cat = categories.find(c=>c.id===f.categoriaId);
-  const overhead = f.overhead || 0;
+  const overhead = mermaPct;
   const margen = f.margen || 0;
 
   let rowsHtml = "";
@@ -5627,7 +6017,9 @@ async function printLote(){
         </div>
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-top:12px;font-size:11px;background:#fafafa;padding:8px;border-radius:4px;border:1px solid #eee">
-        <div><strong>Tamaño Teórico:</strong> ${g} g</div>
+        <div><strong>Masa Teórica:</strong> ${g} g</div>
+        <div><strong>Merma Proceso:</strong> ${overhead}% (${(g * overhead / 100).toFixed(1)} g)</div>
+        <div><strong>Rendimiento Teórico:</strong> ${unitsToPackage > 0 ? `${unitsToPackage} u (${esc(selectedPres.nombre || (selectedPres.cantidad + ' ' + selectedPres.unidad))})` : `${netBulkG.toFixed(1)} g granel`}</div>
         <div><strong>pH Esperado:</strong> ${f.ph || "—"}</div>
         <div><strong>Operario:</strong> ${esc(operario)}</div>
         <div><strong>Director/QA:</strong> ${esc(verificador)}</div>
@@ -5714,12 +6106,49 @@ async function printLote(){
       </table>
     </div>
 
-    <!-- 3. PROCEDIMIENTO OPERATIVO ADAPTADO -->
+    <!-- 3. MATERIALES DE ENVASADO Y ACONDICIONAMIENTO -->
+    ${packagingList.length > 0 ? `
+    <div class="pf-section">
+      <div class="pf-section-title" style="font-size:12px">3. Registro y Despeje de Materiales de Envasado y Acondicionamiento (BPM)</div>
+      <div style="font-size:11px;color:#555;margin-bottom:6px">
+        Presentación a envasar: <strong>${esc(selectedPres.nombre || (selectedPres.cantidad + ' ' + selectedPres.unidad))}</strong> · Tamaño: ${selectedPres.cantidad} ${selectedPres.unidad} · Unidades teóricas: <strong>${unitsToPackage} u</strong>
+      </div>
+      <table style="font-size:11px">
+        <thead>
+          <tr style="background:#eaf0e4">
+            <th>Componente</th>
+            <th>Material / Referencia Insumo</th>
+            <th style="text-align:right">Teórico Requerido</th>
+            <th style="width:75px;text-align:right">Real Utilizado</th>
+            <th style="width:75px;text-align:right">Merma / Desecho</th>
+            <th style="width:85px;text-align:center">N° Lote Insumo</th>
+            <th style="width:65px;text-align:center">Operario</th>
+            <th style="width:65px;text-align:center">QA</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${packagingList.map(item => `
+            <tr>
+              <td style="font-weight:600">${esc(item.tipo)}</td>
+              <td>${esc(item.nombre)}</td>
+              <td style="text-align:right;font-weight:600">${unitsToPackage} u</td>
+              <td style="border:1px solid #aaa;background:#fff;text-align:right"></td>
+              <td style="border:1px solid #aaa;background:#fff;text-align:right"></td>
+              <td style="border:1px solid #aaa;background:#fff"></td>
+              <td style="border:1px solid #aaa;background:#fff"></td>
+              <td style="border:1px solid #aaa;background:#fff"></td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>` : ""}
+
+    <!-- ${packagingList.length > 0 ? "4" : "3"}. PROCEDIMIENTO OPERATIVO ADAPTADO -->
     ${procHtml}
 
-    <!-- 4. CONTROLES EN PROCESO Y LIBERACIÓN DE CALIDAD -->
+    <!-- ${packagingList.length > 0 ? "5" : "4"}. CONTROLES EN PROCESO Y LIBERACIÓN DE CALIDAD -->
     <div class="pf-section">
-      <div class="pf-section-title" style="font-size:12px">4. Control de Calidad en Proceso y Liberación de Lote (INVIMA)</div>
+      <div class="pf-section-title" style="font-size:12px">${packagingList.length > 0 ? "5" : "4"}. Control de Calidad en Proceso y Liberación de Lote (INVIMA)</div>
       <table style="font-size:10.5px">
         <thead>
           <tr style="background:#f0f2ea">
@@ -5750,8 +6179,8 @@ async function printLote(){
           </tr>
           <tr>
             <td>Rendimiento Final Obtenido</td>
-            <td>Teórico ${g} g (Merma máx permitida ${overhead}%)</td>
-            <td style="border-bottom:1px solid #999">Real: _______ g (____ %)</td>
+            <td>Teórico ${g} g (Merma máx permitida ${overhead}%) ${unitsToPackage > 0 ? `· <strong>${unitsToPackage} u</strong> teóricas` : ""}</td>
+            <td style="border-bottom:1px solid #999">Real: _______ g / _______ u</td>
             <td style="text-align:center">[  ] Sí &nbsp; [  ] No</td>
           </tr>
         </tbody>
