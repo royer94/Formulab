@@ -476,6 +476,10 @@ select.input{cursor:pointer;appearance:none;
     <button class="nav-item" data-view="categories" onclick="showView('categories')">🗂️ Gestionar categorías</button>
     <div class="nav-section">Herramientas & ERP</div>
     <div style="display:flex;align-items:center;gap:2px">
+      <button class="nav-item" data-view="produccion" onclick="showView('produccion')" style="flex:1">🏭 Registro de Producción</button>
+      <button class="btn-icon" title="Abrir en pestaña nueva" onclick="openViewNewTab('produccion')" style="padding:6px 6px;font-size:12px;opacity:.7">↗</button>
+    </div>
+    <div style="display:flex;align-items:center;gap:2px">
       <button class="nav-item" data-view="ingredientsdb" onclick="showView('ingredientsdb')" style="flex:1">📦 Insumos & ERP</button>
       <button class="btn-icon" title="Abrir en pestaña nueva" onclick="openViewNewTab('ingredientsdb')" style="padding:6px 6px;font-size:12px;opacity:.7">↗</button>
     </div>
@@ -916,6 +920,99 @@ select.input{cursor:pointer;appearance:none;
         </tr>
       </thead>
       <tbody id="ingdb-tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- REGISTRO DE PRODUCCIÓN (BITÁCORA DE LOTES ELABORADOS & ERP) -->
+<div id="view-produccion" class="view">
+  <div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:12px">
+    <div>
+      <h1>🏭 Registro de Producción</h1>
+      <p>Historial oficial de lotes elaborados, control BPM / INVIMA, costos de producción y sincronización de producto terminado con el ERP.</p>
+    </div>
+    <div class="btn-row" style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-primary btn-sm" onclick="openModalLoteManual()" title="Registrar un lote elaborado anteriormente sin descontar stock dos veces">+ Registrar Lote Manual</button>
+      <button class="btn btn-erp btn-sm" onclick="syncAllPendingProductionToERP()" id="btn-sync-all-prod-erp" title="Enviar todos los lotes pendientes al inventario de producto terminado del ERP">📡 Sincronizar Pendientes al ERP</button>
+      <button class="btn btn-ghost btn-sm" onclick="exportProductionLogsCSV()" title="Descargar tabla de lotes elaborados en formato Excel / CSV">↓ Exportar CSV</button>
+    </div>
+  </div>
+
+  <!-- TARJETAS RESUMEN DEL PERIODO / FILTRO -->
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:16px">
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 16px">
+      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Lotes Elaborados</div>
+      <div id="prod-kpi-lotes" style="font-size:22px;font-weight:700;font-family:var(--fm);color:var(--accent);margin-top:4px">0</div>
+      <div id="prod-kpi-lotes-sub" style="font-size:11px;color:var(--muted);margin-top:2px">en el periodo filtrado</div>
+    </div>
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 16px">
+      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Unidades Terminadas</div>
+      <div id="prod-kpi-unidades" style="font-size:22px;font-weight:700;font-family:var(--fm);color:var(--ok);margin-top:4px">0 u</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:2px">productos envasados</div>
+    </div>
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 16px">
+      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Masa Total Fabricada</div>
+      <div id="prod-kpi-masa" style="font-size:22px;font-weight:700;font-family:var(--fm);color:var(--text);margin-top:4px">0 g</div>
+      <div id="prod-kpi-masa-sub" style="font-size:11px;color:var(--muted);margin-top:2px">0.00 kg a granel</div>
+    </div>
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 16px">
+      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Costo Total Producción</div>
+      <div id="prod-kpi-costo" style="font-size:22px;font-weight:700;font-family:var(--fm);color:var(--accent2);margin-top:4px">$0</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:2px">MP + Empaque</div>
+    </div>
+  </div>
+
+  <!-- BARRA DE FILTROS POR MES, PRODUCTO Y ESTADO -->
+  <div class="toolbar" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:14px">
+    <div style="display:flex;gap:8px;align-items:center;flex:1;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:6px">
+        <label style="font-size:11px;color:var(--muted);font-weight:600;white-space:nowrap">📅 Mes:</label>
+        <select class="input" id="prod-filter-month" onchange="renderProductionLogs()" style="width:auto;font-size:12px;min-width:150px">
+          <option value="all">Todos los meses</option>
+        </select>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <label style="font-size:11px;color:var(--muted);font-weight:600;white-space:nowrap">🧴 Producto:</label>
+        <select class="input" id="prod-filter-product" onchange="renderProductionLogs()" style="width:auto;font-size:12px;min-width:190px">
+          <option value="all">Todos los productos</option>
+        </select>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <label style="font-size:11px;color:var(--muted);font-weight:600;white-space:nowrap">📌 Estado:</label>
+        <select class="input" id="prod-filter-status" onchange="renderProductionLogs()" style="width:auto;font-size:12px">
+          <option value="all">Todos los estados</option>
+          <option value="produced">🟢 Producido (Stock descontado)</option>
+          <option value="bmr_only">🟡 Solo BMR (Pendiente descuento)</option>
+          <option value="erp_synced">📡 Sincronizado con ERP</option>
+          <option value="erp_pending">⚠️ Pendiente envío ERP</option>
+        </select>
+      </div>
+      <input class="input" id="prod-search" placeholder="Buscar por lote, producto u operario…" oninput="renderProductionLogs()" style="flex:1;min-width:180px;font-size:12px">
+    </div>
+    <div>
+      <button class="btn btn-ghost btn-sm" onclick="resetProductionFilters()" title="Limpiar todos los filtros">Limpiar filtros</button>
+    </div>
+  </div>
+
+  <!-- TABLA DE REGISTRO DE PRODUCCIÓN -->
+  <div style="overflow-x:auto">
+    <table class="input" style="width:100%;border-collapse:collapse">
+      <thead>
+        <tr style="text-align:left;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border)">
+          <th style="padding:10px 8px">Fecha</th>
+          <th style="padding:10px 8px">Código de Lote</th>
+          <th style="padding:10px 8px">Producto / Fórmula</th>
+          <th style="padding:10px 8px">Presentación</th>
+          <th style="padding:10px 8px;text-align:right">Masa Lote</th>
+          <th style="padding:10px 8px;text-align:right">Unidades</th>
+          <th style="padding:10px 8px;text-align:right">Costo Total</th>
+          <th style="padding:10px 8px;text-align:right">Costo / Unid.</th>
+          <th style="padding:10px 8px">Responsables</th>
+          <th style="padding:10px 8px;text-align:center">Estado Stock & ERP</th>
+          <th style="padding:10px 8px;text-align:center">Acciones</th>
+        </tr>
+      </thead>
+      <tbody id="prod-tbody"></tbody>
     </table>
   </div>
 </div>
@@ -1513,6 +1610,73 @@ select.input{cursor:pointer;appearance:none;
   </div>
 </div>
 
+<!-- MODAL: REGISTRAR LOTE MANUAL / HISTÓRICO -->
+<div class="modal-backdrop" id="modal-lote-manual">
+  <div class="modal-box" style="max-width:560px">
+    <div class="modal-header">
+      <div>
+        <span class="modal-title">🏭 Registrar Lote en Producción</span>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px">Ideal para registrar lotes ya fabricados (ej. hoy) y sincronizarlos con el ERP</div>
+      </div>
+      <button class="modal-close" onclick="closeModal('modal-lote-manual')">✕</button>
+    </div>
+    <div class="modal-body" style="display:flex;flex-direction:column;gap:12px">
+      <div class="g2">
+        <div>
+          <label class="fl">Producto / Fórmula *</label>
+          <select class="input" id="mlm-formula" onchange="onManualLoteFormulaChange()"></select>
+        </div>
+        <div>
+          <label class="fl">Presentación Envasada</label>
+          <select class="input" id="mlm-pres" onchange="onManualLotePresChange()"></select>
+        </div>
+      </div>
+      <div class="g3">
+        <div>
+          <label class="fl">Unidades Terminadas *</label>
+          <input class="input" type="number" id="mlm-units" min="0" step="1" value="5" oninput="onManualLoteUnitsInput()" style="font-family:var(--fm);font-weight:700;color:var(--accent)">
+        </div>
+        <div>
+          <label class="fl">Masa Total Lote (g) *</label>
+          <input class="input" type="number" id="mlm-size" min="1" step="0.1" value="250" style="font-family:var(--fm)">
+        </div>
+        <div>
+          <label class="fl">Fecha de Elaboración</label>
+          <input class="input" type="date" id="mlm-date" style="font-family:var(--fm)">
+        </div>
+      </div>
+      <div class="g3">
+        <div>
+          <label class="fl">Código de Lote</label>
+          <input class="input" id="mlm-code" placeholder="LOT-20261106-01" style="font-family:var(--fm)">
+        </div>
+        <div>
+          <label class="fl">Operario</label>
+          <input class="input" id="mlm-operario" placeholder="Operario Responsable">
+        </div>
+        <div>
+          <label class="fl">Control Calidad / QA</label>
+          <input class="input" id="mlm-qa" placeholder="Director Técnico / QA">
+        </div>
+      </div>
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:8px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12.5px">
+          <input type="checkbox" id="mlm-deduct-stock" style="width:16px;height:16px;accent-color:var(--accent)">
+          <span><strong>Descontar insumos y empaques del stock ahora</strong> <span style="color:var(--muted);font-size:11px">(Déjalo desmarcado si ya los descontaste antes desde la ventana Lote)</span></span>
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12.5px">
+          <input type="checkbox" id="mlm-sync-erp" checked style="width:16px;height:16px;accent-color:var(--accent)">
+          <span><strong>📡 Enviar unidades de producto terminado al ERP inmediatamente</strong></span>
+        </label>
+      </div>
+    </div>
+    <div class="modal-footer" style="display:flex;justify-content:flex-end;gap:8px;padding:12px 20px;border-top:1px solid var(--border)">
+      <button class="btn btn-ghost" onclick="closeModal('modal-lote-manual')">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveManualProductionLote()">✓ Guardar en Registro de Producción</button>
+    </div>
+  </div>
+</div>
+
 <!-- MODAL: SIMULADOR -->
 <div class="modal-backdrop" id="modal-sim">
   <div class="modal-box">
@@ -1783,16 +1947,17 @@ Sé directo, técnico y práctico.`
 // ═══════════════════════════════════════════════
 // STATE
 // ═══════════════════════════════════════════════
-let formulas   = load("cosmolab_v4") || [];
-let categories = load("cosmolab_cats") || [];
-let priceDB    = load("cosmolab_precios") || {};
-let editingId  = null;
-let activeFormula = null;
-let lastInciData  = null;
-let chatHistory   = [];
-let activeFilter  = "all";
-let selectedColor = CAT_COLORS[0];
-let selectedEmoji = "🧴";
+let formulas       = load("cosmolab_v4") || [];
+let categories     = load("cosmolab_cats") || [];
+let priceDB        = load("cosmolab_precios") || {};
+let productionLogs = load("cosmolab_produccion") || [];
+let editingId      = null;
+let activeFormula  = null;
+let lastInciData   = null;
+let chatHistory    = [];
+let activeFilter   = "all";
+let selectedColor  = CAT_COLORS[0];
+let selectedEmoji  = "🧴";
 
 const CAT_EMOJIS = [
   "🧴","🧼","💊","🌿","🫧","✨","💧","🌸","🍯","🥥","🌱","🫙",
@@ -1809,6 +1974,10 @@ function persist(){
 }
 function persistPriceDB(){
   localStorage.setItem("cosmolab_precios", JSON.stringify(priceDB));
+  if(window.__scheduleFirestoreSync) window.__scheduleFirestoreSync();
+}
+function persistProductionLogs(){
+  localStorage.setItem("cosmolab_produccion", JSON.stringify(productionLogs));
   if(window.__scheduleFirestoreSync) window.__scheduleFirestoreSync();
 }
 // Clave normalizada para buscar coincidencias por nombre o INCI (insensible a tildes, mayúsculas y espacios)
@@ -3978,7 +4147,7 @@ function openViewNewTab(viewName){
 // Enrutador directo por hash (funciona en pestañas nuevas y recargas)
 function handleHashRoute(){
   const h = location.hash.replace("#","").trim();
-  if(["home","editor","categories","ingredientsdb","inci","settings"].includes(h)){
+  if(["home","editor","categories","ingredientsdb","produccion","inci","settings"].includes(h)){
     setTimeout(()=>showView(h), 40);
   }
 }
@@ -4261,6 +4430,10 @@ function showView(name){
   if(name==="settings"){ renderKeyStatus(); loadErpConfigToUI(); }
   if(name==="ingredientsdb"){
     renderIngredientsDB();
+  }
+  if(name==="produccion"){
+    populateProductionFilters();
+    renderProductionLogs();
   }
 }
 
@@ -5305,6 +5478,12 @@ function openLote(id){
     mermaInput.value = 0;
   }
 
+  // Pre-cargar N° de Lote Oficial secuencial del día para que BMR (PDF) y Descontar Stock compartan el mismo código
+  const bmrCodeInput = document.getElementById("bmr-lote-code");
+  if(bmrCodeInput){
+    bmrCodeInput.value = generateNextLoteCode();
+  }
+
   document.getElementById("proc-text").style.display="none";
   document.getElementById("proc-text").textContent="";
   document.getElementById("proc-loading").style.display="none";
@@ -5609,13 +5788,30 @@ async function descontarStockLote(){
   const f = activeFormula;
   if(!f || !f.ingredientes || !f.ingredientes.length) return;
 
-  const { g, selectedPres, unitsToPackage, packagingList } = getLotePackagingState(f, { fromUnitsInput: true });
+  const { g, mermaPct, selectedPres, unitsToPackage, packagingList } = getLotePackagingState(f, { fromUnitsInput: true });
   if(g <= 0) return;
+
+  const loteCodeInput = document.getElementById("bmr-lote-code");
+  const loteCode = (loteCodeInput?.value || "").trim() || generateNextLoteCode();
+  if(loteCodeInput && !loteCodeInput.value.trim()) loteCodeInput.value = loteCode;
+
+  const operario = (document.getElementById("bmr-operario")?.value || "").trim() || "Operario Responsable";
+  const verificador = (document.getElementById("bmr-verificador")?.value || "").trim() || "Control de Calidad / QA";
+
+  // Prevenir doble descuento accidental del mismo código de lote
+  const existingLog = productionLogs.find(l =>
+    String(l.loteCode || "").toUpperCase() === loteCode.toUpperCase() &&
+    String(l.formulaId) === String(f.id)
+  );
+  if(existingLog && existingLog.stockDescontado){
+    const repeatOk = confirm(`⚠️ ATENCIÓN: El lote "${loteCode}" de "${f.nombre}" YA tiene registrado el descuento de insumos en el Registro de Producción.\n\n¿Estás seguro de que deseas volver a descontar el stock por segunda vez?`);
+    if(!repeatOk) return;
+  }
 
   const idx = buildIngredientsIndex();
 
-  let confirmMsg = `¿Confirmas la fabricación de este lote de ${g} g de "${f.nombre}"?\n\n`;
-  confirmMsg += `Se descontarán del inventario:\n• ${f.ingredientes.length} materia(s) prima(s) cosmética(s) (a granel)`;
+  let confirmMsg = `¿Confirmas la fabricación del lote ${loteCode} (${g} g) de "${f.nombre}"?\n\n`;
+  confirmMsg += `Se descontarán del inventario y se guardará en 🏭 Registro de Producción:\n• ${f.ingredientes.length} materia(s) prima(s) cosmética(s) (a granel)`;
   if(packagingList.length > 0 && unitsToPackage > 0){
     confirmMsg += `\n• ${packagingList.length} material(es) de empaque (${unitsToPackage} ${unitsToPackage === 1 ? 'unidad' : 'unidades'} c/u para "${selectedPres.nombre || (selectedPres.cantidad + ' ' + selectedPres.unidad)}"):`;
     packagingList.forEach(pk => {
@@ -5630,6 +5826,7 @@ async function descontarStockLote(){
 
   const nowTs = Date.now();
   const detalleMovimientos = [];
+  const consumedItems = [];
   let countMP = 0;
 
   f.ingredientes.forEach(i => {
@@ -5672,7 +5869,18 @@ async function descontarStockLote(){
       }
     });
 
-    detalleMovimientos.push(`• ${p.nombre || i.nombre || i.inci}: -${Math.round(gastoEnUnidad * 100) / 100} ${uStock} (${prevStock} → ${newStock} ${uStock})`);
+    const cantRedondeada = Math.round(gastoEnUnidad * 100) / 100;
+    detalleMovimientos.push(`• ${p.nombre || i.nombre || i.inci}: -${cantRedondeada} ${uStock} (${prevStock} → ${newStock} ${uStock})`);
+    consumedItems.push({
+      tipo: "MP",
+      nombre: p.nombre || i.nombre || i.inci,
+      inci: p.inci || i.inci || "",
+      cantidadDescontada: cantRedondeada,
+      unidad: uStock,
+      gramos: Math.round(gr * 100) / 100,
+      stockAnterior: prevStock,
+      stockNuevo: newStock
+    });
     countMP++;
   });
 
@@ -5711,11 +5919,55 @@ async function descontarStockLote(){
       });
 
       detalleMovimientos.push(`• 📦 ${p.nombre || item.nombre}: -${unitsToPackage} ${uStock} (${prevStock} → ${newStock} ${uStock})`);
+      consumedItems.push({
+        tipo: "EMPAQUE",
+        rolEmpaque: item.tipo || "Empaque",
+        nombre: p.nombre || item.nombre,
+        inci: "",
+        cantidadDescontada: unitsToPackage,
+        unidad: uStock,
+        stockAnterior: prevStock,
+        stockNuevo: newStock
+      });
       countEmpaque++;
     });
   }
 
+  // Registrar o actualizar en 🏭 Registro de Producción
+  const fin = calculateBatchFinancials(f, g, selectedPres, unitsToPackage, packagingList);
+  const presLabel = selectedPres
+    ? (selectedPres.nombre ? `${selectedPres.nombre} (${selectedPres.cantidad} ${selectedPres.unidad})` : `${selectedPres.cantidad} ${selectedPres.unidad}`)
+    : "Solo a granel";
+  const logEntry = upsertProductionLog({
+    loteCode,
+    formulaId: f.id,
+    formulaNombre: f.nombre,
+    formulaVersion: f.version || "v1.0",
+    categoriaId: f.categoriaId || "",
+    fecha: existingLog?.fecha || new Date().toISOString().slice(0, 10),
+    loteGramos: g,
+    mermaPct: mermaPct || 0,
+    presentacionNombre: presLabel,
+    presentacionCantidad: selectedPres ? (parseFloat(selectedPres.cantidad) || 0) : 0,
+    presentacionUnidad: selectedPres ? (selectedPres.unidad || "g") : "g",
+    unidades: unitsToPackage || 0,
+    costoGranel: fin.costoGranel,
+    costoEmpaque: fin.costoEmpaque,
+    costoTotal: fin.costoTotal,
+    costoUnitario: fin.costoUnitario,
+    operario,
+    verificador,
+    bmrGenerado: existingLog?.bmrGenerado || false,
+    stockDescontado: true,
+    consumedItems
+  });
+
   persistPriceDB();
+  persistProductionLogs();
+
+  // Sincronizar con el ERP (insumos actualizados + lote de producto terminado)
+  const erpRes = await syncProductionBatchToERP(logEntry, true);
+
   if(typeof window.__forceFirestoreSyncNow === "function"){
     await window.__forceFirestoreSyncNow();
   }
@@ -5723,8 +5975,15 @@ async function descontarStockLote(){
   if(document.getElementById("view-ingredientsdb")?.classList.contains("active")){
     renderIngredientsDB();
   }
+  if(document.getElementById("view-produccion")?.classList.contains("active")){
+    populateProductionFilters();
+    renderProductionLogs();
+  }
 
-  let finalMsg = `✓ ¡Fabricación registrada y sincronizada!\n\nSe descontaron del inventario (${countMP} MP${countEmpaque > 0 ? ` + ${countEmpaque} empaques` : ""}):\n` + detalleMovimientos.join("\n");
+  let finalMsg = `✓ ¡Fabricación del lote ${loteCode} registrada en 🏭 Registro de Producción!\n\n`;
+  finalMsg += `• Producto: ${f.nombre}${unitsToPackage > 0 ? ` (${unitsToPackage} u — ${presLabel})` : ` (${g} g a granel)`}\n`;
+  finalMsg += `• Estado ERP: ${erpRes && erpRes.ok ? "Sincronizado con el ERP ✓" : "Guardado localmente (pendiente sincronizar ERP)"}\n\n`;
+  finalMsg += `Se descontaron del inventario (${countMP} MP${countEmpaque > 0 ? ` + ${countEmpaque} empaques` : ""}):\n` + detalleMovimientos.join("\n");
   alert(finalMsg);
 }
 
@@ -5869,7 +6128,7 @@ function openVersions(id){
 // EXPORT / IMPORT
 // ═══════════════════════════════════════════════
 function exportAll(){
-  const blob=new Blob([JSON.stringify({formulas,categories,priceDB,exportedAt:new Date().toISOString()},null,2)],{type:"application/json"});
+  const blob=new Blob([JSON.stringify({formulas,categories,priceDB,productionLogs,exportedAt:new Date().toISOString()},null,2)],{type:"application/json"});
   const a=document.createElement("a"); a.href=URL.createObjectURL(blob);
   a.download=`cosmolab_${new Date().toISOString().slice(0,10)}.json`; a.click();
 }
@@ -6009,6 +6268,12 @@ function handleImport(e){
         if(!formulas.find(x=>x.id===f.id)) formulas.unshift(f);
       });
       Object.assign(priceDB, nP); // los precios importados sobreescriben coincidencias existentes
+      if(Array.isArray(d.productionLogs)){
+        d.productionLogs.forEach(pl => {
+          if(pl && pl.loteCode) upsertProductionLog(pl);
+        });
+        persistProductionLogs();
+      }
       persist(); persistPriceDB(); renderCards();
       if(window.__forceFirestoreSyncNow) window.__forceFirestoreSyncNow();
       alert("Importación completada.");
@@ -6469,7 +6734,748 @@ async function printLote(){
       <span>Impreso: ${new Date().toLocaleString("es-CO")}</span>
     </div>`;
 
+  // Guardar automáticamente el Batch Record en 🏭 Registro de Producción (sin duplicar si ya existe el mismo código de lote)
+  const fin = calculateBatchFinancials(f, g, selectedPres, unitsToPackage, packagingList);
+  const presLabel = selectedPres
+    ? (selectedPres.nombre ? `${selectedPres.nombre} (${selectedPres.cantidad} ${selectedPres.unidad})` : `${selectedPres.cantidad} ${selectedPres.unidad}`)
+    : "Solo a granel";
+  upsertProductionLog({
+    loteCode,
+    formulaId: f.id,
+    formulaNombre: f.nombre,
+    formulaVersion: f.version || "v1.0",
+    categoriaId: f.categoriaId || "",
+    fecha: new Date().toISOString().slice(0, 10),
+    loteGramos: g,
+    mermaPct: overhead || 0,
+    presentacionNombre: presLabel,
+    presentacionCantidad: selectedPres ? (parseFloat(selectedPres.cantidad) || 0) : 0,
+    presentacionUnidad: selectedPres ? (selectedPres.unidad || "g") : "g",
+    unidades: unitsToPackage || 0,
+    costoGranel: fin.costoGranel,
+    costoEmpaque: fin.costoEmpaque,
+    costoTotal: fin.costoTotal,
+    costoUnitario: fin.costoUnitario,
+    operario,
+    verificador,
+    bmrGenerado: true,
+    bmrHtmlSnapshot: bmrHtml
+  });
+  persistProductionLogs();
+  if(typeof window.__scheduleFirestoreSync === "function") window.__scheduleFirestoreSync();
+  if(document.getElementById("view-produccion")?.classList.contains("active")){
+    populateProductionFilters();
+    renderProductionLogs();
+  }
+
   openStandaloneWindow(bmrHtml, `BMR — ${f.nombre} — ${loteCode}`);
+}
+
+// ═══════════════════════════════════════════════
+// REGISTRO DE PRODUCCIÓN (HISTORIAL DE LOTES / BMR & SYNC ERP)
+// ═══════════════════════════════════════════════
+function generateNextLoteCode(dateStr){
+  const d = (dateStr || new Date().toISOString().slice(0, 10)).replace(/-/g, "");
+  const prefix = `LOT-${d}-`;
+  let maxSeq = 0;
+  (productionLogs || []).forEach(l => {
+    const code = String(l.loteCode || "").toUpperCase();
+    if(code.startsWith(prefix)){
+      const num = parseInt(code.slice(prefix.length), 10);
+      if(!isNaN(num) && num > maxSeq) maxSeq = num;
+    }
+  });
+  const nextSeq = String(maxSeq + 1).padStart(2, "0");
+  return `${prefix}${nextSeq}`;
+}
+
+function calculateBatchFinancials(f, g, selectedPres, unitsToPackage, packagingList){
+  const idx = buildIngredientsIndex();
+  let costoGranel = 0;
+  (f.ingredientes || []).forEach(i => {
+    const pct = parseFloat(i.porcentaje) || 0;
+    const gr = (pct / 100) * g;
+    const key = resolveCanonicalInsumoKey(i.nombre, i.inci, idx);
+    const dbItem = idx[key] || priceDB[key] || {};
+    const precio = (parseFloat(i.precio) > 0) ? parseFloat(i.precio) : (parseFloat(dbItem.precio) || 0);
+    const uCosto = i.unidadCosto || dbItem.unidadCosto || "g";
+    const dMP = parseFloat(i.densidadMP) || parseFloat(dbItem.densidadMP) || getPreloadedDensity(i.nombre, i.inci) || parseFloat(f.densidad) || 1.0;
+    if(precio > 0){
+      costoGranel += gr * costoAGramo(precio, uCosto, dMP);
+    }
+  });
+
+  let costoEmpaque = 0;
+  const pkList = Array.isArray(packagingList) ? packagingList : getPackagingMaterialsList(selectedPres);
+  if(unitsToPackage > 0 && pkList.length > 0){
+    pkList.forEach(item => {
+      const key = resolveCanonicalInsumoKey(item.nombre, "", idx);
+      const dbItem = idx[key] || priceDB[key] || {};
+      const precioUnit = parseFloat(dbItem.precio) || 0;
+      costoEmpaque += precioUnit * unitsToPackage;
+    });
+  }
+
+  const costoTotal = Math.round((costoGranel + costoEmpaque) * 100) / 100;
+  const costoUnitario = unitsToPackage > 0 ? Math.round((costoTotal / unitsToPackage) * 100) / 100 : 0;
+  return {
+    costoGranel: Math.round(costoGranel * 100) / 100,
+    costoEmpaque: Math.round(costoEmpaque * 100) / 100,
+    costoTotal,
+    costoUnitario
+  };
+}
+
+function upsertProductionLog(data){
+  if(!Array.isArray(productionLogs)) productionLogs = [];
+  const codeNorm = String(data.loteCode || "").trim().toUpperCase();
+  const fId = String(data.formulaId || "");
+  const now = Date.now();
+
+  let existing = productionLogs.find(l =>
+    String(l.loteCode || "").trim().toUpperCase() === codeNorm &&
+    (fId ? String(l.formulaId || "") === fId : true)
+  );
+
+  if(existing){
+    existing.formulaId = data.formulaId || existing.formulaId;
+    existing.formulaNombre = data.formulaNombre || existing.formulaNombre;
+    existing.formulaVersion = data.formulaVersion || existing.formulaVersion;
+    existing.categoriaId = data.categoriaId ?? existing.categoriaId;
+    existing.fecha = data.fecha || existing.fecha;
+    existing.mes = (data.fecha || existing.fecha || new Date().toISOString().slice(0, 10)).slice(0, 7);
+    existing.loteGramos = data.loteGramos ?? existing.loteGramos;
+    existing.mermaPct = data.mermaPct ?? existing.mermaPct;
+    existing.presentacionNombre = data.presentacionNombre || existing.presentacionNombre;
+    existing.presentacionCantidad = data.presentacionCantidad ?? existing.presentacionCantidad;
+    existing.presentacionUnidad = data.presentacionUnidad || existing.presentacionUnidad;
+    existing.unidades = data.unidades !== undefined ? data.unidades : existing.unidades;
+    existing.costoGranel = data.costoGranel !== undefined ? data.costoGranel : existing.costoGranel;
+    existing.costoEmpaque = data.costoEmpaque !== undefined ? data.costoEmpaque : existing.costoEmpaque;
+    existing.costoTotal = data.costoTotal !== undefined ? data.costoTotal : existing.costoTotal;
+    existing.costoUnitario = data.costoUnitario !== undefined ? data.costoUnitario : existing.costoUnitario;
+    existing.operario = data.operario || existing.operario;
+    existing.verificador = data.verificador || existing.verificador;
+    if(data.bmrGenerado) existing.bmrGenerado = true;
+    if(data.bmrHtmlSnapshot) existing.bmrHtmlSnapshot = data.bmrHtmlSnapshot;
+    if(data.stockDescontado) existing.stockDescontado = true;
+    if(data.erpSynced !== undefined) existing.erpSynced = data.erpSynced;
+    if(Array.isArray(data.consumedItems) && data.consumedItems.length > 0){
+      existing.consumedItems = data.consumedItems;
+    }
+    existing.tsUpdated = now;
+    return existing;
+  } else {
+    const fecha = data.fecha || new Date().toISOString().slice(0, 10);
+    const entry = {
+      id: data.id || ("prod_" + uid()),
+      loteCode: data.loteCode || generateNextLoteCode(fecha),
+      formulaId: data.formulaId || "",
+      formulaNombre: data.formulaNombre || "Producto",
+      formulaVersion: data.formulaVersion || "v1.0",
+      categoriaId: data.categoriaId || "",
+      fecha,
+      mes: fecha.slice(0, 7),
+      loteGramos: parseFloat(data.loteGramos) || 0,
+      mermaPct: parseFloat(data.mermaPct) || 0,
+      presentacionNombre: data.presentacionNombre || "Solo a granel",
+      presentacionCantidad: parseFloat(data.presentacionCantidad) || 0,
+      presentacionUnidad: data.presentacionUnidad || "g",
+      unidades: parseInt(data.unidades, 10) || 0,
+      costoGranel: parseFloat(data.costoGranel) || 0,
+      costoEmpaque: parseFloat(data.costoEmpaque) || 0,
+      costoTotal: parseFloat(data.costoTotal) || 0,
+      costoUnitario: parseFloat(data.costoUnitario) || 0,
+      operario: data.operario || "Operario Responsable",
+      verificador: data.verificador || "Control de Calidad / QA",
+      bmrGenerado: !!data.bmrGenerado,
+      bmrHtmlSnapshot: data.bmrHtmlSnapshot || "",
+      stockDescontado: !!data.stockDescontado,
+      erpSynced: !!data.erpSynced,
+      erpSyncedAt: data.erpSyncedAt || null,
+      consumedItems: Array.isArray(data.consumedItems) ? data.consumedItems : [],
+      ts: data.ts || now,
+      tsUpdated: now
+    };
+    productionLogs.unshift(entry);
+    return entry;
+  }
+}
+
+const MESES_NOMBRES = {
+  "01": "Enero", "02": "Febrero", "03": "Marzo", "04": "Abril",
+  "05": "Mayo", "06": "Junio", "07": "Julio", "08": "Agosto",
+  "09": "Septiembre", "10": "Octubre", "11": "Noviembre", "12": "Diciembre"
+};
+
+function formatMesLabel(ym){
+  if(!ym || !ym.includes("-")) return ym || "Sin fecha";
+  const [y, m] = ym.split("-");
+  return `${MESES_NOMBRES[m] || m} ${y}`;
+}
+
+function populateProductionFilters(){
+  const monthSel = document.getElementById("prod-filter-month");
+  const prodSel = document.getElementById("prod-filter-product");
+  if(!monthSel || !prodSel) return;
+
+  const curMonth = monthSel.value || "all";
+  const curProd = prodSel.value || "all";
+
+  const monthsSet = new Set();
+  const prodsMap = new Map();
+
+  (productionLogs || []).forEach(l => {
+    const ym = l.mes || (l.fecha ? l.fecha.slice(0, 7) : "");
+    if(ym) monthsSet.add(ym);
+    if(l.formulaNombre){
+      const key = String(l.formulaId || l.formulaNombre);
+      if(!prodsMap.has(key)) prodsMap.set(key, l.formulaNombre);
+    }
+  });
+
+  // También agregar fórmulas activas aunque aún no tengan lotes para que el filtro muestre todo el catálogo
+  (formulas || []).forEach(f => {
+    if(f && f.nombre){
+      const key = String(f.id || f.nombre);
+      if(!prodsMap.has(key)) prodsMap.set(key, f.nombre);
+    }
+  });
+
+  const sortedMonths = Array.from(monthsSet).sort((a, b) => b.localeCompare(a));
+  monthSel.innerHTML = `<option value="all">Todos los meses</option>` +
+    sortedMonths.map(ym => `<option value="${esc(ym)}">${esc(formatMesLabel(ym))}</option>`).join("");
+  if(sortedMonths.includes(curMonth)) monthSel.value = curMonth;
+
+  const sortedProds = Array.from(prodsMap.entries()).sort((a, b) => a[1].localeCompare(b[1]));
+  prodSel.innerHTML = `<option value="all">Todos los productos</option>` +
+    sortedProds.map(([k, name]) => `<option value="${esc(k)}">${esc(name)}</option>`).join("");
+  if(prodsMap.has(curProd)) prodSel.value = curProd;
+}
+
+function resetProductionFilters(){
+  const m = document.getElementById("prod-filter-month");
+  const p = document.getElementById("prod-filter-product");
+  const s = document.getElementById("prod-filter-status");
+  const q = document.getElementById("prod-search");
+  if(m) m.value = "all";
+  if(p) p.value = "all";
+  if(s) s.value = "all";
+  if(q) q.value = "";
+  renderProductionLogs();
+}
+
+function getFilteredProductionLogs(){
+  const monthVal = document.getElementById("prod-filter-month")?.value || "all";
+  const prodVal = document.getElementById("prod-filter-product")?.value || "all";
+  const statusVal = document.getElementById("prod-filter-status")?.value || "all";
+  const searchVal = (document.getElementById("prod-search")?.value || "").trim().toLowerCase();
+
+  return (productionLogs || []).filter(l => {
+    const ym = l.mes || (l.fecha ? l.fecha.slice(0, 7) : "");
+    if(monthVal !== "all" && ym !== monthVal) return false;
+    if(prodVal !== "all" && String(l.formulaId || l.formulaNombre) !== prodVal && l.formulaNombre !== prodVal) return false;
+    if(statusVal === "completed" && !l.stockDescontado) return false;
+    if(statusVal === "bmr_only" && l.stockDescontado) return false;
+    if(statusVal === "erp_pending" && l.erpSynced) return false;
+    if(searchVal){
+      const hay = `${l.loteCode || ""} ${l.formulaNombre || ""} ${l.presentacionNombre || ""} ${l.operario || ""} ${l.verificador || ""} ${l.fecha || ""}`.toLowerCase();
+      if(!hay.includes(searchVal)) return false;
+    }
+    return true;
+  }).sort((a, b) => {
+    const dCmp = String(b.fecha || "").localeCompare(String(a.fecha || ""));
+    if(dCmp !== 0) return dCmp;
+    return (b.tsUpdated || b.ts || 0) - (a.tsUpdated || a.ts || 0);
+  });
+}
+
+function renderProductionLogs(){
+  const tbody = document.getElementById("prod-tbody");
+  if(!tbody) return;
+
+  const list = getFilteredProductionLogs();
+
+  // Actualizar KPIs según los filtros activos
+  const totalLotes = list.length;
+  const totalUnidades = list.reduce((acc, l) => acc + (parseInt(l.unidades, 10) || 0), 0);
+  const totalGramos = list.reduce((acc, l) => acc + (parseFloat(l.loteGramos) || 0), 0);
+  const totalCosto = list.reduce((acc, l) => acc + (parseFloat(l.costoTotal) || 0), 0);
+
+  const elLotes = document.getElementById("prod-kpi-lotes");
+  const elUnid = document.getElementById("prod-kpi-unidades");
+  const elMasa = document.getElementById("prod-kpi-masa");
+  const elCosto = document.getElementById("prod-kpi-costo");
+
+  if(elLotes) elLotes.textContent = totalLotes;
+  if(elUnid) elUnid.textContent = `${totalUnidades} u`;
+  if(elMasa){
+    elMasa.textContent = totalGramos >= 1000
+      ? `${(totalGramos / 1000).toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kg`
+      : `${Math.round(totalGramos)} g`;
+  }
+  if(elCosto) elCosto.textContent = fmtMoney(totalCosto);
+
+  if(list.length === 0){
+    tbody.innerHTML = `<tr>
+      <td colspan="9" style="text-align:center;padding:36px 20px;color:var(--muted)">
+        <div style="font-size:28px;margin-bottom:8px">🏭</div>
+        <div style="font-weight:600;color:var(--text);margin-bottom:4px">No hay lotes registrados con los filtros actuales</div>
+        <div style="font-size:12px;margin-bottom:14px">Los lotes se guardan automáticamente cuando generas el <strong>Batch Record (PDF)</strong> o presionas <strong>Descontar Insumos y Empaque</strong> en cualquier fórmula, o puedes registrar un lote manualmente.</div>
+        <button class="btn btn-primary btn-sm" onclick="openModalLoteManual()">+ Registrar Lote Manual</button>
+      </td>
+    </tr>`;
+    return;
+  }
+
+  tbody.innerHTML = list.map(l => {
+    const stockBadge = l.stockDescontado
+      ? `<span style="display:inline-flex;align-items:center;gap:4px;background:rgba(125,222,82,.14);color:var(--ok);border:1px solid rgba(125,222,82,.35);padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600">✓ Stock descontado</span>`
+      : `<span style="display:inline-flex;align-items:center;gap:4px;background:rgba(240,180,41,.14);color:var(--warn);border:1px solid rgba(240,180,41,.35);padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600">📄 Solo BMR (Pend. Stock)</span>`;
+
+    const erpBadge = l.erpSynced
+      ? `<span style="display:inline-flex;align-items:center;gap:4px;background:rgba(91,200,245,.14);color:var(--info);border:1px solid rgba(91,200,245,.35);padding:2px 8px;border-radius:99px;font-size:10.5px;font-weight:600" title="Sincronizado con el ERP">☁️ ERP Sync ✓</span>`
+      : `<span style="display:inline-flex;align-items:center;gap:4px;background:rgba(255,255,255,.05);color:var(--muted);border:1px solid var(--border);padding:2px 8px;border-radius:99px;font-size:10.5px" title="Pendiente enviar al ERP">⏳ ERP Pendiente</span>`;
+
+    const bmrBadge = l.bmrGenerado
+      ? `<span style="font-size:10px;color:var(--accent);display:block;margin-top:2px">🖨️ PDF BMR generado</span>`
+      : "";
+
+    return `<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:10px 12px;white-space:nowrap">
+        <div style="font-weight:600;color:var(--text)">${esc(l.fecha || "—")}</div>
+        <div style="font-size:10.5px;color:var(--muted)">${esc(formatMesLabel(l.mes || (l.fecha || "").slice(0, 7)))}</div>
+      </td>
+      <td style="padding:10px 12px;white-space:nowrap">
+        <span style="font-family:monospace;font-weight:700;font-size:12.5px;color:var(--accent);background:var(--surface2);padding:3px 7px;border-radius:6px;border:1px solid var(--border)">${esc(l.loteCode || "—")}</span>
+        ${bmrBadge}
+      </td>
+      <td style="padding:10px 12px">
+        <div style="font-weight:600;color:var(--text)">${esc(l.formulaNombre || "—")}</div>
+        <div style="font-size:11px;color:var(--muted)">${esc(l.presentacionNombre || "Solo a granel")} · <span style="opacity:.8">${esc(l.formulaVersion || "v1.0")}</span></div>
+      </td>
+      <td style="padding:10px 12px;text-align:right;font-weight:600;white-space:nowrap">
+        ${(parseFloat(l.loteGramos) || 0).toLocaleString("es-CO")} g
+        ${l.mermaPct > 0 ? `<div style="font-size:10px;color:var(--muted);font-weight:400">Merma: ${l.mermaPct}%</div>` : ""}
+      </td>
+      <td style="padding:10px 12px;text-align:center;white-space:nowrap">
+        <span style="font-size:14px;font-weight:700;color:${l.unidades > 0 ? 'var(--ok)' : 'var(--muted)'}">${l.unidades > 0 ? `${l.unidades} u` : "Granel"}</span>
+      </td>
+      <td style="padding:10px 12px;text-align:right;white-space:nowrap">
+        <div style="font-weight:600;color:var(--text)">${fmtMoney(l.costoTotal || 0)}</div>
+        <div style="font-size:10.5px;color:var(--muted)">${l.unidades > 0 ? `${fmtMoney(l.costoUnitario || 0)} / u` : `Granel: ${fmtMoney(l.costoGranel || 0)}`}</div>
+      </td>
+      <td style="padding:10px 12px;font-size:11.5px">
+        <div style="color:var(--text)">👤 ${esc(l.operario || "—")}</div>
+        <div style="color:var(--muted);font-size:10.5px">🔬 ${esc(l.verificador || "—")}</div>
+      </td>
+      <td style="padding:10px 12px;text-align:center">
+        <div style="display:flex;flex-direction:column;align-items:center;gap:4px">
+          ${stockBadge}
+          ${erpBadge}
+        </div>
+      </td>
+      <td style="padding:10px 12px;text-align:right;white-space:nowrap">
+        <div style="display:inline-flex;gap:5px;flex-wrap:wrap;justify-content:flex-end">
+          <button class="btn btn-ghost btn-sm" onclick="reprintProductionLogBMR('${esc(l.id)}')" title="Ver / Reimprimir Batch Record (PDF)">🖨️ PDF</button>
+          ${!l.stockDescontado ? `<button class="btn btn-sm" style="background:rgba(125,222,82,.15);border-color:var(--ok);color:var(--ok)" onclick="deductStockFromProductionLog('${esc(l.id)}')" title="Descontar insumos de este lote ahora">📦 Descontar</button>` : ""}
+          <button class="btn btn-ghost btn-sm" style="border-color:var(--info);color:var(--info)" onclick="syncProductionBatchToERP('${esc(l.id)}', false)" title="Sincronizar este lote con el ERP">☁️ ERP</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteProductionLog('${esc(l.id)}')" title="Eliminar registro de lote">✕</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join("");
+}
+
+async function reprintProductionLogBMR(logId){
+  const log = (productionLogs || []).find(x => String(x.id) === String(logId));
+  if(!log) return;
+
+  if(log.bmrHtmlSnapshot){
+    openStandaloneWindow(log.bmrHtmlSnapshot, `BMR — ${log.formulaNombre} — ${log.loteCode}`);
+    return;
+  }
+
+  // Si fue creado manualmente y no tenía snapshot HTML, abrir el modal de lote con sus datos y generar el BMR
+  const f = formulas.find(x => String(x.id) === String(log.formulaId)) ||
+            formulas.find(x => priceKey(x.nombre) === priceKey(log.formulaNombre));
+  if(!f){
+    alert("No se encontró la fórmula original para generar el PDF de este lote.");
+    return;
+  }
+  openLote(f.id);
+  const sizeInput = document.getElementById("lote-size");
+  const unitsInput = document.getElementById("lote-units");
+  const codeInput = document.getElementById("bmr-lote-code");
+  const opInput = document.getElementById("bmr-operario");
+  const qaInput = document.getElementById("bmr-verificador");
+  if(sizeInput && log.loteGramos > 0) sizeInput.value = log.loteGramos;
+  if(unitsInput && log.unidades > 0) unitsInput.value = log.unidades;
+  if(codeInput && log.loteCode) codeInput.value = log.loteCode;
+  if(opInput && log.operario) opInput.value = log.operario;
+  if(qaInput && log.verificador) qaInput.value = log.verificador;
+  renderLote({ fromUnitsInput: log.unidades > 0 });
+  await printLote();
+}
+
+async function deductStockFromProductionLog(logId){
+  const log = (productionLogs || []).find(x => String(x.id) === String(logId));
+  if(!log) return;
+  const f = formulas.find(x => String(x.id) === String(log.formulaId)) ||
+            formulas.find(x => priceKey(x.nombre) === priceKey(log.formulaNombre));
+  if(!f){
+    alert("No se encontró la fórmula asociada a este lote para descontar sus ingredientes.");
+    return;
+  }
+  openLote(f.id);
+  const sizeInput = document.getElementById("lote-size");
+  const unitsInput = document.getElementById("lote-units");
+  const codeInput = document.getElementById("bmr-lote-code");
+  const opInput = document.getElementById("bmr-operario");
+  const qaInput = document.getElementById("bmr-verificador");
+  if(sizeInput && log.loteGramos > 0) sizeInput.value = log.loteGramos;
+  if(unitsInput && log.unidades > 0) unitsInput.value = log.unidades;
+  if(codeInput && log.loteCode) codeInput.value = log.loteCode;
+  if(opInput && log.operario) opInput.value = log.operario;
+  if(qaInput && log.verificador) qaInput.value = log.verificador;
+  renderLote({ fromUnitsInput: log.unidades > 0 });
+  await descontarStockLote();
+}
+
+function deleteProductionLog(logId){
+  const idx = (productionLogs || []).findIndex(x => String(x.id) === String(logId));
+  if(idx < 0) return;
+  const log = productionLogs[idx];
+  if(!confirm(`¿Eliminar el registro del lote "${log.loteCode}" (${log.formulaNombre}) del historial?\n\nNota: Esto solo borra el registro de la tabla, no revierte descuentos previos de inventario.`)) return;
+  productionLogs.splice(idx, 1);
+  persistProductionLogs();
+  if(typeof window.__forceFirestoreSyncNow === "function") window.__forceFirestoreSyncNow();
+  populateProductionFilters();
+  renderProductionLogs();
+}
+
+// Sincronizar un lote de producción con el ERP (envía stock actualizado de insumos + registro del lote terminado)
+async function syncProductionBatchToERP(logIdOrObj, silent = false){
+  const log = typeof logIdOrObj === "object"
+    ? logIdOrObj
+    : (productionLogs || []).find(x => String(x.id) === String(logIdOrObj));
+  if(!log) return { ok: false, error: "Lote no encontrado" };
+
+  const defaultUrl = "https://www.frescuranaturalcosmeticos.com/api/insumos.php";
+  const defaultToken = "FN-ERP-PUBLISH-2026";
+  const erpUrl = localStorage.getItem("cosmolab_erp_url") || defaultUrl;
+  const erpToken = localStorage.getItem("cosmolab_erp_token") || defaultToken;
+
+  const idx = buildIngredientsIndex();
+  const payloadInsumos = Object.values(idx).map(item => {
+    const dbItem = priceDB[item.key] || {};
+    return {
+      code: item.key,
+      name: item.nombre || dbItem.nombre || "",
+      inci: item.inci || dbItem.inci || "",
+      category: item.fase || dbItem.fase || "General",
+      unit_cost: parseFloat(item.precio ?? dbItem.precio) || 0,
+      cost_unit: item.unidadCosto || dbItem.unidadCosto || "g",
+      stock: parseFloat(item.stock ?? dbItem.stock) || 0,
+      stock_unit: item.unidadStock || dbItem.unidadStock || "g",
+      density: parseFloat(item.densidadMP ?? dbItem.densidadMP) || 1.0,
+      supplier: item.proveedor || dbItem.proveedor || ""
+    };
+  });
+
+  const batchPayload = {
+    source: "FormuLab_Pro_FNC",
+    action: "register_production_batch",
+    timestamp: new Date().toISOString(),
+    production_batch: {
+      id: log.id,
+      lote_code: log.loteCode,
+      fecha: log.fecha,
+      mes: log.mes,
+      formula_id: log.formulaId,
+      product_name: log.formulaNombre,
+      formula_version: log.formulaVersion,
+      presentation: log.presentacionNombre,
+      presentation_qty: log.presentacionCantidad,
+      presentation_unit: log.presentacionUnidad,
+      batch_size_g: log.loteGramos,
+      merma_pct: log.mermaPct,
+      finished_units: log.unidades,
+      bulk_cost_cop: log.costoGranel,
+      packaging_cost_cop: log.costoEmpaque,
+      total_cost_cop: log.costoTotal,
+      unit_cost_cop: log.costoUnitario,
+      operario: log.operario,
+      verificador_qa: log.verificador,
+      stock_deducted: log.stockDescontado,
+      consumed_materials: log.consumedItems || []
+    },
+    insumos: payloadInsumos
+  };
+
+  try{
+    const res = await fetch(erpUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${erpToken}`,
+        "X-ERP-Token": erpToken
+      },
+      body: JSON.stringify(batchPayload)
+    });
+
+    if(!res.ok){
+      const errText = await res.text().catch(() => "");
+      throw new Error(`HTTP ${res.status} ${res.statusText} ${errText}`.trim());
+    }
+
+    log.erpSynced = true;
+    log.erpSyncedAt = new Date().toISOString();
+    log.tsUpdated = Date.now();
+    persistProductionLogs();
+    if(document.getElementById("view-produccion")?.classList.contains("active")){
+      renderProductionLogs();
+    }
+    if(!silent){
+      alert(`✓ Lote ${log.loteCode} (${log.formulaNombre} · ${log.unidades} u) sincronizado exitosamente con el ERP.`);
+    }
+    return { ok: true };
+  }catch(err){
+    console.warn("Aviso al sincronizar lote con ERP:", err);
+    if(!silent){
+      alert(`⚠️ No se pudo conectar directamente con el ERP (${err.message}).\n\nEl lote sigue guardado en FormuLab y puedes reintentar con el botón "☁️ ERP" o "📡 Sincronizar Pendientes al ERP".`);
+    }
+    return { ok: false, error: err.message };
+  }
+}
+
+async function syncAllPendingProductionToERP(){
+  const pending = (productionLogs || []).filter(l => !l.erpSynced);
+  if(pending.length === 0){
+    alert("✓ Todos los lotes registrados ya están sincronizados con el ERP.");
+    return;
+  }
+  let okCount = 0;
+  let lastErr = "";
+  for(const l of pending){
+    const r = await syncProductionBatchToERP(l, true);
+    if(r.ok) okCount++;
+    else lastErr = r.error;
+  }
+  renderProductionLogs();
+  if(typeof window.__forceFirestoreSyncNow === "function") window.__forceFirestoreSyncNow();
+  if(okCount === pending.length){
+    alert(`✓ Se sincronizaron ${okCount} lote(s) pendiente(s) con el ERP correctamente.`);
+  } else {
+    alert(`Se sincronizaron ${okCount} de ${pending.length} lote(s).\n${lastErr ? `Detalle último error: ${lastErr}` : ""}`);
+  }
+}
+
+// Modal de Registro Manual de Lote (ej. para registrar lotes ya fabricados como los 5 Deo Fresh Botanic en barra)
+function openModalLoteManual(){
+  const fSel = document.getElementById("mlm-formula");
+  if(!fSel) return;
+  const sortedFormulas = [...(formulas || [])].sort((a, b) => String(a.nombre || "").localeCompare(String(b.nombre || "")));
+  fSel.innerHTML = sortedFormulas.map(f => `<option value="${esc(f.id)}">${esc(f.nombre)} (${esc(f.version || "v1.0")})</option>`).join("");
+
+  // Si existe una fórmula que coincida con "Deo Fresh Botanic", preseleccionarla convenientemente
+  const deo = sortedFormulas.find(f => /deo\s*fresh/i.test(f.nombre));
+  if(deo) fSel.value = deo.id;
+
+  const today = new Date().toISOString().slice(0, 10);
+  const dateEl = document.getElementById("mlm-date");
+  const codeEl = document.getElementById("mlm-code");
+  const deductEl = document.getElementById("mlm-deduct-stock");
+  const syncEl = document.getElementById("mlm-sync-erp");
+
+  if(dateEl) dateEl.value = today;
+  if(codeEl) codeEl.value = generateNextLoteCode(today);
+  if(deductEl) deductEl.checked = false; // Por defecto desmarcado en registro histórico/manual para no descontar dos veces
+  if(syncEl) syncEl.checked = true;
+
+  onManualLoteFormulaChange();
+  openModal("modal-lote-manual");
+}
+
+function onManualLoteFormulaChange(){
+  const fId = document.getElementById("mlm-formula")?.value;
+  const f = (formulas || []).find(x => String(x.id) === String(fId));
+  const presSel = document.getElementById("mlm-pres");
+  if(!f || !presSel) return;
+
+  const presos = f.presentaciones || [];
+  let opts = "";
+  presos.forEach((p, idx) => {
+    const lbl = p.nombre ? `${p.nombre} (${p.cantidad} ${p.unidad})` : `${p.cantidad} ${p.unidad}`;
+    opts += `<option value="${idx}">${esc(lbl)}</option>`;
+  });
+  opts += `<option value="none">Solo a granel (sin envasar)</option>`;
+  presSel.innerHTML = opts;
+  presSel.value = presos.length > 0 ? "0" : "none";
+
+  const unitsEl = document.getElementById("mlm-units");
+  if(unitsEl && (!unitsEl.value || parseInt(unitsEl.value, 10) <= 0)){
+    unitsEl.value = 5;
+  }
+  onManualLotePresChange();
+}
+
+function onManualLotePresChange(){
+  onManualLoteUnitsInput();
+}
+
+function onManualLoteUnitsInput(){
+  const fId = document.getElementById("mlm-formula")?.value;
+  const f = (formulas || []).find(x => String(x.id) === String(fId));
+  if(!f) return;
+  const presVal = document.getElementById("mlm-pres")?.value;
+  const units = Math.max(0, parseInt(document.getElementById("mlm-units")?.value, 10) || 0);
+  const sizeEl = document.getElementById("mlm-size");
+  if(!sizeEl) return;
+
+  if(presVal !== "none" && f.presentaciones && f.presentaciones[parseInt(presVal, 10)]){
+    const p = f.presentaciones[parseInt(presVal, 10)];
+    const cap = parseFloat(p.cantidad) || 0;
+    const u = (p.unidad || "g").toLowerCase();
+    const dens = parseFloat(f.densidad) || 1.0;
+    const gramosPorUnidad = u === "ml" ? cap * dens : cap;
+    if(units > 0 && gramosPorUnidad > 0){
+      sizeEl.value = Math.round(units * gramosPorUnidad * 100) / 100;
+    }
+  } else if(!sizeEl.value || parseFloat(sizeEl.value) <= 0){
+    sizeEl.value = f.loteRef || 1000;
+  }
+}
+
+async function saveManualProductionLote(){
+  const fId = document.getElementById("mlm-formula")?.value;
+  const f = (formulas || []).find(x => String(x.id) === String(fId));
+  if(!f){
+    alert("Selecciona una fórmula válida.");
+    return;
+  }
+
+  const presVal = document.getElementById("mlm-pres")?.value;
+  const selectedPres = (presVal !== "none" && f.presentaciones && f.presentaciones[parseInt(presVal, 10)])
+    ? f.presentaciones[parseInt(presVal, 10)]
+    : null;
+  const units = Math.max(0, parseInt(document.getElementById("mlm-units")?.value, 10) || 0);
+  const g = Math.max(0, parseFloat(document.getElementById("mlm-size")?.value) || 0);
+  const fecha = document.getElementById("mlm-date")?.value || new Date().toISOString().slice(0, 10);
+  const loteCode = (document.getElementById("mlm-code")?.value || "").trim() || generateNextLoteCode(fecha);
+  const operario = (document.getElementById("mlm-operario")?.value || "").trim() || "Operario Responsable";
+  const verificador = (document.getElementById("mlm-qa")?.value || "").trim() || "Control de Calidad / QA";
+  const shouldDeduct = !!document.getElementById("mlm-deduct-stock")?.checked;
+  const shouldSyncErp = !!document.getElementById("mlm-sync-erp")?.checked;
+
+  if(g <= 0){
+    alert("Ingresa la masa total fabricada en gramos.");
+    return;
+  }
+
+  const packagingList = getPackagingMaterialsList(selectedPres);
+  const fin = calculateBatchFinancials(f, g, selectedPres, units, packagingList);
+  const presLabel = selectedPres
+    ? (selectedPres.nombre ? `${selectedPres.nombre} (${selectedPres.cantidad} ${selectedPres.unidad})` : `${selectedPres.cantidad} ${selectedPres.unidad}`)
+    : "Solo a granel";
+
+  if(shouldDeduct){
+    // Si el usuario pidió descontar stock ahora mismo, usar el flujo oficial de descuento
+    closeModal("modal-lote-manual");
+    openLote(f.id);
+    if(document.getElementById("lote-pres-select")) document.getElementById("lote-pres-select").value = presVal;
+    if(document.getElementById("lote-size")) document.getElementById("lote-size").value = g;
+    if(document.getElementById("lote-units")) document.getElementById("lote-units").value = units;
+    if(document.getElementById("bmr-lote-code")) document.getElementById("bmr-lote-code").value = loteCode;
+    if(document.getElementById("bmr-operario")) document.getElementById("bmr-operario").value = operario;
+    if(document.getElementById("bmr-verificador")) document.getElementById("bmr-verificador").value = verificador;
+    renderLote({ fromUnitsInput: units > 0 });
+    await descontarStockLote();
+    closeModal("modal-lote");
+    populateProductionFilters();
+    renderProductionLogs();
+    return;
+  }
+
+  // Si no se descuenta stock (porque ya se descontó al elaborar), se marca como completado y se guarda
+  const entry = upsertProductionLog({
+    loteCode,
+    formulaId: f.id,
+    formulaNombre: f.nombre,
+    formulaVersion: f.version || "v1.0",
+    categoriaId: f.categoriaId || "",
+    fecha,
+    loteGramos: g,
+    mermaPct: 0,
+    presentacionNombre: presLabel,
+    presentacionCantidad: selectedPres ? (parseFloat(selectedPres.cantidad) || 0) : 0,
+    presentacionUnidad: selectedPres ? (selectedPres.unidad || "g") : "g",
+    unidades: units,
+    costoGranel: fin.costoGranel,
+    costoEmpaque: fin.costoEmpaque,
+    costoTotal: fin.costoTotal,
+    costoUnitario: fin.costoUnitario,
+    operario,
+    verificador,
+    bmrGenerado: true,
+    stockDescontado: true
+  });
+
+  persistProductionLogs();
+  closeModal("modal-lote-manual");
+
+  let erpMsg = "";
+  if(shouldSyncErp){
+    const r = await syncProductionBatchToERP(entry, true);
+    erpMsg = r.ok ? "\n• Sincronizado con el ERP ✓" : `\n• Pendiente sincronizar con ERP (${r.error || "sin conexión"})`;
+  }
+
+  if(typeof window.__forceFirestoreSyncNow === "function"){
+    await window.__forceFirestoreSyncNow();
+  }
+  populateProductionFilters();
+  renderProductionLogs();
+  alert(`✓ Lote ${entry.loteCode} de "${f.nombre}" (${units} u · ${g} g) guardado en 🏭 Registro de Producción.${erpMsg}`);
+}
+
+function exportProductionLogsCSV(){
+  const list = getFilteredProductionLogs();
+  if(!list.length){
+    alert("No hay registros de producción para exportar.");
+    return;
+  }
+  const headers = [
+    "Fecha", "Mes", "N_Lote", "Producto", "Version", "Presentacion",
+    "Masa_Gramos", "Unidades_Envasadas", "Costo_Granel_COP", "Costo_Empaque_COP",
+    "Costo_Total_COP", "Costo_Unitario_COP", "Operario", "Verificador_QA",
+    "Stock_Descontado", "Sincronizado_ERP"
+  ];
+  const escCsv = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const rows = list.map(l => [
+    l.fecha,
+    l.mes,
+    l.loteCode,
+    l.formulaNombre,
+    l.formulaVersion,
+    l.presentacionNombre,
+    l.loteGramos,
+    l.unidades,
+    l.costoGranel,
+    l.costoEmpaque,
+    l.costoTotal,
+    l.costoUnitario,
+    l.operario,
+    l.verificador,
+    l.stockDescontado ? "SI" : "NO",
+    l.erpSynced ? "SI" : "NO"
+  ].map(escCsv).join(","));
+
+  const csvContent = "\uFEFF" + [headers.join(","), ...rows].join("\r\n");
+  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `registro_produccion_formulab_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
 }
 
 function printProc(){
@@ -6919,10 +7925,16 @@ persist(); renderCards(); checkApiBanner(); renderKeyStatus();
     clearTimeout(syncTimer);
     syncTimer = setTimeout(async () => {
       try{
+        const compactProdLogs = (productionLogs || []).map(l => {
+          const copy = Object.assign({}, l);
+          delete copy.bmrHtmlSnapshot; // Mantener documento Firestore ligero; el PDF se reimprime desde localStorage o regenera al instante
+          return copy;
+        });
         await setDoc(doc(db, "users", user.uid), {
           formulas: cleanForFirestore(formulas),
           categories: cleanForFirestore(categories),
           priceDB: cleanForFirestore(priceDB),
+          productionLogs: cleanForFirestore(compactProdLogs),
           updatedAt: serverTimestamp()
         });
         lastRemoteFormulaCount = formulas.length;
@@ -6943,10 +7955,16 @@ persist(); renderCards(); checkApiBanner(); renderKeyStatus();
     clearTimeout(syncTimer);
     setSaveStatus("Guardando…", "");
     try{
+      const compactProdLogs = (productionLogs || []).map(l => {
+        const copy = Object.assign({}, l);
+        delete copy.bmrHtmlSnapshot;
+        return copy;
+      });
       await setDoc(doc(db, "users", user.uid), {
         formulas: cleanForFirestore(formulas),
         categories: cleanForFirestore(categories),
         priceDB: cleanForFirestore(priceDB),
+        productionLogs: cleanForFirestore(compactProdLogs),
         updatedAt: serverTimestamp()
       });
       lastRemoteFormulaCount = formulas.length;
@@ -7019,25 +8037,61 @@ persist(); renderCards(); checkApiBanner(); renderKeyStatus();
       priceDB = mergedPriceDB;
       repairGhostAliases(priceDB);
 
+      // Smart Merge productionLogs: conservar lotes locales y remotos más recientes
+      const remoteProdLogs = Array.isArray(data.productionLogs) ? data.productionLogs : [];
+      let hadLocalNewerProd = false;
+      const prodMap = new Map();
+      remoteProdLogs.forEach(rl => {
+        if(rl && (rl.id || rl.loteCode)){
+          prodMap.set(String(rl.id || rl.loteCode), rl);
+        }
+      });
+      (productionLogs || []).forEach(ll => {
+        if(!ll || (!ll.id && !ll.loteCode)) return;
+        const key = String(ll.id || ll.loteCode);
+        const rl = prodMap.get(key) || Array.from(prodMap.values()).find(x => String(x.loteCode || "").toUpperCase() === String(ll.loteCode || "").toUpperCase() && String(x.formulaId) === String(ll.formulaId));
+        if(!rl){
+          prodMap.set(key, ll);
+          hadLocalNewerProd = true;
+        } else {
+          const lTs = ll.tsUpdated || ll.ts || 0;
+          const rTs = rl.tsUpdated || rl.ts || 0;
+          const merged = lTs >= rTs ? Object.assign({}, rl, ll) : Object.assign({}, ll, rl);
+          if(ll.bmrHtmlSnapshot && !merged.bmrHtmlSnapshot) merged.bmrHtmlSnapshot = ll.bmrHtmlSnapshot;
+          prodMap.set(String(merged.id || merged.loteCode), merged);
+          if(lTs > rTs) hadLocalNewerProd = true;
+        }
+      });
+      productionLogs = Array.from(prodMap.values());
+
       lastRemoteFormulaCount = formulas.length;
 
-      if(hadLocalNewer || hadLocalNewerPrice){
+      if(hadLocalNewer || hadLocalNewerPrice || hadLocalNewerProd){
         console.log("Preservados datos locales más recientes tras refresco. Sincronizando con la nube...");
         scheduleFirestoreSync();
       }
     } else {
       repairGhostAliases(priceDB);
+      const compactProdLogs = (productionLogs || []).map(l => {
+        const copy = Object.assign({}, l);
+        delete copy.bmrHtmlSnapshot;
+        return copy;
+      });
       await setDoc(ref, {
         formulas: cleanForFirestore(formulas),
         categories: cleanForFirestore(categories),
         priceDB: cleanForFirestore(priceDB),
+        productionLogs: cleanForFirestore(compactProdLogs),
         updatedAt: serverTimestamp()
       });
       lastRemoteFormulaCount = formulas.length;
     }
     persist();      // refresca localStorage (cache offline) + stats + sidebar
     persistPriceDB();
+    persistProductionLogs();
     if(typeof renderCards === "function") renderCards();
+    if(typeof populateProductionFilters === "function") populateProductionFilters();
+    if(typeof renderProductionLogs === "function") renderProductionLogs();
     if(typeof refreshAutocompleteLists === "function") refreshAutocompleteLists();
     setSaveStatus(`Sincronizado ✓ (${formulas.length} fórmulas)`, "ok");
     // Recordatorio de respaldo periódico (sin descarga automática forzada)
