@@ -3686,9 +3686,10 @@ function saveErpConfig(){
 function loadErpConfigToUI(){
   const urlInput = document.getElementById("erp-api-url");
   const tokenInput = document.getElementById("erp-api-token");
-  const defaultUrl = "https://www.frescuranaturalcosmeticos.com/api/insumos.php";
+  const defaultUrl = "https://frescuradmin.vercel.app/api/insumos.php";
   const defaultToken = "FN-ERP-PUBLISH-2026";
-  if(urlInput) urlInput.value = localStorage.getItem("cosmolab_erp_url") || defaultUrl;
+  const savedUrl = localStorage.getItem("cosmolab_erp_url");
+  if(urlInput) urlInput.value = (savedUrl && !savedUrl.includes("frescuranaturalcosmeticos.com")) ? savedUrl : defaultUrl;
   if(tokenInput) tokenInput.value = localStorage.getItem("cosmolab_erp_token") || defaultToken;
 }
 
@@ -3718,9 +3719,10 @@ async function testErpConnection(){
 }
 
 async function sendIngredientsDirectToERP(){
-  const defaultUrl = "https://www.frescuranaturalcosmeticos.com/api/insumos.php";
+  const defaultUrl = "https://frescuradmin.vercel.app/api/insumos.php";
   const defaultToken = "FN-ERP-PUBLISH-2026";
-  const url = localStorage.getItem("cosmolab_erp_url") || document.getElementById("erp-api-url")?.value.trim() || defaultUrl;
+  const savedUrl = localStorage.getItem("cosmolab_erp_url");
+  const url = (savedUrl && !savedUrl.includes("frescuranaturalcosmeticos.com")) ? savedUrl : (document.getElementById("erp-api-url")?.value.trim() || defaultUrl);
   const token = localStorage.getItem("cosmolab_erp_token") || document.getElementById("erp-api-token")?.value.trim() || defaultToken;
   const idx = buildIngredientsIndex();
   const items = Object.values(idx).map(r => ({
@@ -3765,7 +3767,8 @@ async function sendIngredientsDirectToERP(){
 async function syncIngredientsFromERP(){
   const btn = document.getElementById("btn-sync-from-erp");
   if(btn){ btn.disabled = true; btn.textContent = "⏳ Conectando al ERP..."; }
-  const url = localStorage.getItem("cosmolab_erp_url") || "https://www.frescuranaturalcosmeticos.com/api/insumos.php";
+  const savedUrl = localStorage.getItem("cosmolab_erp_url");
+  const url = (savedUrl && !savedUrl.includes("frescuranaturalcosmeticos.com")) ? savedUrl : "https://frescuradmin.vercel.app/api/insumos.php";
   const token = localStorage.getItem("cosmolab_erp_token") || "FN-ERP-PUBLISH-2026";
   try{
     const res = await fetch(url, {
@@ -7161,25 +7164,28 @@ async function syncProductionBatchToERP(logIdOrObj, silent = false){
     : (productionLogs || []).find(x => String(x.id) === String(logIdOrObj));
   if(!log) return { ok: false, error: "Lote no encontrado" };
 
-  const defaultUrl = "https://www.frescuranaturalcosmeticos.com/api/insumos.php";
+  const defaultUrl = "https://frescuradmin.vercel.app/api/insumos.php";
   const defaultToken = "FN-ERP-PUBLISH-2026";
-  const erpUrl = localStorage.getItem("cosmolab_erp_url") || defaultUrl;
+  const savedUrl = localStorage.getItem("cosmolab_erp_url");
+  const erpUrl = (savedUrl && !savedUrl.includes("frescuranaturalcosmeticos.com")) ? savedUrl : defaultUrl;
   const erpToken = localStorage.getItem("cosmolab_erp_token") || defaultToken;
 
   const idx = buildIngredientsIndex();
-  const payloadInsumos = Object.values(idx).map(item => {
-    const dbItem = priceDB[item.key] || {};
+  const payloadInsumos = Object.entries(idx).map(([key, item]) => {
+    const dbItem = priceDB[key] || {};
     return {
-      code: item.key,
+      sku: item.sku || key,
+      code: item.sku || key,
       name: item.nombre || dbItem.nombre || "",
       inci: item.inci || dbItem.inci || "",
       category: item.fase || dbItem.fase || "General",
       unit_cost: parseFloat(item.precio ?? dbItem.precio) || 0,
-      cost_unit: item.unidadCosto || dbItem.unidadCosto || "g",
+      cost_unit: item.unidad || item.unidadCosto || dbItem.unidadCosto || "g",
       stock: parseFloat(item.stock ?? dbItem.stock) || 0,
+      min_stock: parseFloat(item.stockMin ?? dbItem.stockMin) || 0,
       stock_unit: item.unidadStock || dbItem.unidadStock || "g",
       density: parseFloat(item.densidadMP ?? dbItem.densidadMP) || 1.0,
-      supplier: item.proveedor || dbItem.proveedor || ""
+      supplier: item.proveedores ? [...item.proveedores].join(", ") : (item.proveedor || dbItem.proveedor || "")
     };
   });
 
