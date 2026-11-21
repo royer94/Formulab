@@ -656,10 +656,31 @@ select.input{cursor:pointer;appearance:none;
       </div>
     </div>
 
-    <!-- INGREDIENT TABLE -->
-    <div class="section-label">
-      <span>Ingredientes</span>
+    <!-- INGREDIENT TABLE & MULTI-SUBFORMULA KIT SUPPORT -->
+    <div class="section-label" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span>Ingredientes</span>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="addSubFormulaBlock(null, true)" title="Ideal para Kits con productos distintos (ej: 3 jabones navideños con diferente glicerina o aroma). Cada uno se formula al 100%.">
+          🎁 + Agregar Sub-fórmula / Jabón al Kit
+        </button>
+      </div>
       <span class="pct-total" id="pct-total">Total: 0.00%</span>
+    </div>
+
+    <!-- Cabecera del Componente #1 (visible automáticamente cuando la fórmula es un Kit con 2 o más sub-fórmulas) -->
+    <div id="kit-sub1-header" style="display:none;background:var(--surface2);border:1px solid var(--accent);border-bottom:none;border-radius:10px 10px 0 0;padding:10px 12px;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:1">
+        <span style="background:var(--accent);color:#0e0f0c;font-weight:700;font-size:11px;padding:3px 8px;border-radius:6px">🧼 Sub-fórmula #1</span>
+        <input class="input" id="sub1-nombre" placeholder="Nombre (ej: Jabón 1 - Pino)" value="Jabón 1" style="max-width:220px;font-weight:600" oninput="updatePct()">
+        <div style="display:flex;align-items:center;gap:5px">
+          <span style="font-size:11px;color:var(--muted)">Peso en el Kit:</span>
+          <input class="input" id="sub1-peso" type="number" min="1" step="any" value="100" style="width:80px;font-family:var(--fm)" oninput="onSubFormulaWeightChange()">
+          <span style="font-size:11px;color:var(--muted)">g</span>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <button type="button" class="btn btn-ghost btn-sm" onclick="duplicateMainSubFormula()" title="Duplicar esta sub-fórmula para solo cambiarle la glicerina o el aroma">⧉ Duplicar este jabón</button>
+      </div>
     </div>
 
     <table class="ing-table">
@@ -677,9 +698,15 @@ select.input{cursor:pointer;appearance:none;
     </table>
 
     <div class="ing-actions">
-      <button class="btn btn-ghost" onclick="addIngRow()">+ Fila en blanco</button>
-      <button class="btn btn-ghost" onclick="openInciModal()">+ Buscar con INCI</button>
+      <button type="button" class="btn btn-ghost" onclick="addIngRow(null, 'ing-tbody')">+ Fila en blanco</button>
+      <button type="button" class="btn btn-ghost" onclick="openInciModal('ing-tbody')">+ Buscar con INCI</button>
     </div>
+
+    <!-- Contenedor dinámico para Sub-fórmula #2, #3, etc. en Kits variados -->
+    <div id="subformulas-container" style="display:flex;flex-direction:column;gap:14px;margin-top:6px"></div>
+
+    <!-- Resumen automático del Kit cuando hay múltiples sub-fórmulas -->
+    <div id="kit-summary-banner" style="display:none;background:rgba(200,240,74,.08);border:1px solid var(--accent);border-radius:10px;padding:10px 14px;margin-top:6px;font-size:12px"></div>
 
     <!-- COST SECTION -->
     <div class="cost-section">
@@ -4504,6 +4531,9 @@ function renderCards(){
     const sCls=`s-${f.status||"borrador"}`;
     const sLbl={borrador:"Borrador",activa:"Activa",revision:"En revisión",obsoleta:"Obsoleta"}[f.status||"borrador"];
     const ver=f.version?`<span class="card-version">${esc(f.version)}</span>`:"";
+    const kitPill = (Array.isArray(f.subFormulas) && f.subFormulas.length > 1)
+      ? `<span class="cat-pill" style="border-color:var(--accent);color:var(--accent)">🎁 Kit (${f.subFormulas.length} sub-fórmulas)</span>`
+      : "";
     const presSummary=(f.presentaciones?.length&&f.costoPer100)?
       f.presentaciones.map(p=>`${p.nombre||p.cantidad+p.unidad}: ${fmtMoney(p.pvp)}`).join(" · "):"";
     const costLine=f.costoPer100?`<div class="card-cost" style="font-size:11px">
@@ -4514,7 +4544,7 @@ function renderCards(){
       <div class="card-top">
         <div style="flex:1;min-width:0">
           <div class="card-name">${esc(f.nombre)}</div>
-          <div class="card-meta">${catPill}<span class="status-badge ${sCls}">${sLbl}</span>${ver}<span>${fmt(f.ts)}</span></div>
+          <div class="card-meta">${catPill}${kitPill}<span class="status-badge ${sCls}">${sLbl}</span>${ver}<span>${fmt(f.ts)}</span></div>
         </div>
         <div class="btn-row" style="flex-shrink:0">
           <button class="btn-icon" title="Editar" onclick="editFormula('${f.id}')">✎</button>
@@ -4689,6 +4719,8 @@ function populateCatSelect(){
 // ═══════════════════════════════════════════════
 // EDITOR
 // ═══════════════════════════════════════════════
+let activeInciTargetTbody = "ing-tbody";
+
 function openEditor(id){
   clearTimeout(autosaveTimer);
   refreshAutocompleteLists();
@@ -4709,16 +4741,37 @@ function openEditor(id){
   document.getElementById("f-margen").value=f?.margen??40;
   populateCatSelect();
   if(f?.categoriaId) document.getElementById("f-categoria").value=f.categoriaId;
+
   const tbody=document.getElementById("ing-tbody"); tbody.innerHTML="";
-  (f?.ingredientes||[]).forEach(i=>addIngRow(i));
+  const subContainer=document.getElementById("subformulas-container");
+  if(subContainer) subContainer.innerHTML="";
+  const sub1Header=document.getElementById("kit-sub1-header");
+  if(sub1Header) sub1Header.style.display="none";
+  const kitBanner=document.getElementById("kit-summary-banner");
+  if(kitBanner) kitBanner.style.display="none";
+
+  if(Array.isArray(f?.subFormulas) && f.subFormulas.length > 1){
+    if(sub1Header) sub1Header.style.display="flex";
+    const s1 = f.subFormulas[0];
+    if(document.getElementById("sub1-nombre")) document.getElementById("sub1-nombre").value = s1.nombre || "Jabón 1";
+    if(document.getElementById("sub1-peso")) document.getElementById("sub1-peso").value = s1.pesoG || 100;
+    (s1.ingredientes || []).forEach(i => addIngRow(i, "ing-tbody"));
+    f.subFormulas.slice(1).forEach(sub => addSubFormulaBlock(sub, false));
+  } else {
+    if(document.getElementById("sub1-nombre")) document.getElementById("sub1-nombre").value = "Jabón 1";
+    if(document.getElementById("sub1-peso")) document.getElementById("sub1-peso").value = 100;
+    (f?.ingredientes||[]).forEach(i=>addIngRow(i, "ing-tbody"));
+  }
+
   // Autocompletar precios conocidos en filas que no traigan precio (ej. fórmulas importadas o antiguas)
-  document.querySelectorAll("#ing-tbody tr").forEach(tr=>{
+  document.querySelectorAll("#ing-tbody tr, #subformulas-container tbody tr").forEach(tr=>{
     const pInput = tr.querySelectorAll("input")[4];
     if(!pInput || !pInput.value) autofillPrice(tr);
   });
   updatePct(); updateSaveBtn();
   const panel=document.getElementById("inci-display-panel");
-  if(f?.ingredientes?.length){ renderInciPanel(f.ingredientes); panel.style.display="block"; }
+  const allIngsNow = getIngredientes();
+  if(allIngsNow.length){ renderInciPanel(allIngsNow); panel.style.display="block"; }
   else panel.style.display="none";
   // Load other costs
   document.getElementById("other-costs-list").innerHTML="";
@@ -4740,15 +4793,16 @@ function editFormula(id){
   document.getElementById("editor-title").textContent = "Editar fórmula";
 }
 
-function addIngRow(data){
+function addIngRow(data, targetTbodyId = "ing-tbody"){
   const id=uid(); const tr=document.createElement("tr"); tr.dataset.id=id;
   const initialDens = data?.densidadMP || (data?.nombre || data?.inci ? getPreloadedDensity(data?.nombre, data?.inci) : '') || '';
+  const pctVal = (data?.subFormulaPct !== undefined && data?.subFormulaPct !== null) ? data.subFormulaPct : (data?.porcentaje || '');
   tr.innerHTML=`
     <td><input class="input" list="dl-ing-nombres" placeholder="Nombre Comercial" value="${esc(data?.nombre||'')}" oninput="updatePct(); debounceAutofill(this.closest('tr'))" onblur="autofillPrice(this.closest('tr'))"></td>
     <td><input class="input" placeholder="INCI" value="${esc(data?.inci||'')}" oninput="updatePct()" onblur="autofillPrice(this.closest('tr'))"></td>
     <td><input class="input" list="dl-proveedores" placeholder="Proveedor" value="${esc(data?.proveedor||'')}" onblur="autofillPrice(this.closest('tr'))"></td>
     <td><select class="input" onchange="autofillPrice(this.closest('tr'))">${PHASES.map(p=>`<option value="${p}"${(data?.fase||'')==p?" selected":""}>${p||"—"}</option>`).join("")}</select></td>
-    <td><input class="input" type="number" placeholder="%" min="0" max="100" step="0.01" value="${data?.porcentaje||''}" oninput="updatePct()"></td>
+    <td><input class="input" type="number" placeholder="%" min="0" max="100" step="0.01" value="${pctVal}" oninput="updatePct()"></td>
     <td><input class="input" type="number" placeholder="0" min="0" step="any" value="${data?.precio||''}" oninput="updateCosts()" onblur="autofillPrice(this.closest('tr'))" style="font-family:var(--fm);width:100%"></td>
     <td><select class="input" onchange="updateCosts(); autofillPrice(this.closest('tr'))" style="font-size:11px;padding:6px 4px">
       <option value="g"  ${(data?.unidadCosto||'g')==='g' ?'selected':''}>/ g</option>
@@ -4759,7 +4813,194 @@ function addIngRow(data){
     <td><input class="input td-densidad-mp" type="number" placeholder="1.0" min="0.1" step="0.001" value="${initialDens}" oninput="updateCosts()" onblur="autofillPrice(this.closest('tr'))" style="font-family:var(--fm);width:100%;font-size:11px" title="Densidad específica del insumo (g/mL). Solo requerida si el costo o uso es en mL/L"></td>
     <td style="text-align:right;font-family:var(--fm);font-size:12px;color:var(--muted);white-space:nowrap" class="td-ing-cost">—</td>
     <td class="td-rm"><button class="btn-dsf" onclick="removeIngRow(this)">✕</button></td>`;
-  document.getElementById("ing-tbody").appendChild(tr);
+  const tb = document.getElementById(targetTbodyId) || document.getElementById("ing-tbody");
+  if(tb) tb.appendChild(tr);
+  updateCosts();
+}
+
+function extractRowsFromTbody(tbodyEl){
+  if(!tbodyEl) return [];
+  return [...tbodyEl.querySelectorAll("tr")].map(r=>{
+    const inputs=r.querySelectorAll("input");
+    const sels=r.querySelectorAll("select");
+    const dVal = parseFloat(inputs[5]?.value) || null;
+    return {
+      id: r.dataset.id || uid(),
+      nombre: inputs[0]?.value.trim() || "",
+      inci: inputs[1]?.value.trim() || "",
+      proveedor: inputs[2]?.value.trim() || "",
+      fase: sels[0]?.value || "",
+      porcentaje: inputs[3]?.value || "",
+      precio: inputs[4]?.value || "",
+      unidadCosto: sels[1]?.value || "g",
+      densidadMP: dVal
+    };
+  }).filter(i=>i.nombre||i.inci);
+}
+
+function addSubFormulaBlock(subData = null, syncKitWeight = false){
+  const container = document.getElementById("subformulas-container");
+  if(!container) return;
+  const sub1Header = document.getElementById("kit-sub1-header");
+  if(sub1Header) sub1Header.style.display = "flex";
+
+  const subId = subData?.id || ("sub_" + uid());
+  const tbodyId = `sub-ing-tbody-${subId}`;
+  const currentCount = container.querySelectorAll(".subformula-card").length + 2; // #2, #3, etc.
+  const defaultName = subData?.nombre || `Jabón ${currentCount}`;
+  const defaultPeso = subData?.pesoG || (parseFloat(document.getElementById("sub1-peso")?.value) || 100);
+
+  const card = document.createElement("div");
+  card.className = "subformula-card";
+  card.dataset.subId = subId;
+  card.style.cssText = "background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden";
+  card.innerHTML = `
+    <div style="background:var(--surface2);border-bottom:1px solid var(--border);padding:10px 12px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:1">
+        <span class="sub-badge-num" style="background:var(--accent);color:#0e0f0c;font-weight:700;font-size:11px;padding:3px 8px;border-radius:6px">🧼 Sub-fórmula #${currentCount}</span>
+        <input class="input sub-nombre" placeholder="Nombre (ej: Jabón ${currentCount} - Canela)" value="${esc(defaultName)}" style="max-width:220px;font-weight:600" oninput="updatePct()">
+        <div style="display:flex;align-items:center;gap:5px">
+          <span style="font-size:11px;color:var(--muted)">Peso en el Kit:</span>
+          <input class="input sub-peso" type="number" min="1" step="any" value="${defaultPeso}" style="width:80px;font-family:var(--fm)" oninput="onSubFormulaWeightChange()">
+          <span style="font-size:11px;color:var(--muted)">g</span>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span class="pct-total sub-pct-total">Total: 0.00%</span>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="duplicateSubFormulaCard(this)" title="Duplicar esta sub-fórmula">⧉ Duplicar</button>
+        <button type="button" class="btn btn-danger btn-sm" onclick="removeSubFormulaCard(this)" title="Quitar esta sub-fórmula del kit">✕ Quitar</button>
+      </div>
+    </div>
+    <div style="padding:10px 12px">
+      <table class="ing-table">
+        <thead>
+          <tr>
+            <th>Nombre Comercial</th><th>INCI</th><th>Proveedor</th><th>Fase</th>
+            <th style="width:65px">%</th>
+            <th style="width:75px">Precio</th><th style="width:65px">Unidad</th>
+            <th style="width:65px" title="Densidad del insumo (g/mL)">d (g/mL)</th>
+            <th style="width:85px">Costo %</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="${tbodyId}" class="sub-ing-tbody"></tbody>
+      </table>
+      <div class="ing-actions" style="margin-top:8px">
+        <button type="button" class="btn btn-ghost btn-sm" onclick="addIngRow(null, '${tbodyId}')">+ Fila en blanco</button>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="openInciModal('${tbodyId}')">+ Buscar con INCI</button>
+      </div>
+    </div>
+  `;
+  container.appendChild(card);
+
+  const rowsToLoad = Array.isArray(subData?.ingredientes) ? subData.ingredientes : [];
+  if(rowsToLoad.length > 0){
+    rowsToLoad.forEach(r => addIngRow(r, tbodyId));
+  } else {
+    addIngRow(null, tbodyId);
+  }
+
+  renumberSubFormulaCards();
+  if(syncKitWeight){
+    applyKitTotalWeightToLoteRef(false);
+  }
+  updatePct();
+}
+
+function duplicateMainSubFormula(){
+  const nombre1 = document.getElementById("sub1-nombre")?.value.trim() || "Jabón 1";
+  const peso1 = parseFloat(document.getElementById("sub1-peso")?.value) || 100;
+  const rows1 = extractRowsFromTbody(document.getElementById("ing-tbody"));
+  const nextNum = (document.querySelectorAll("#subformulas-container .subformula-card").length) + 2;
+  addSubFormulaBlock({
+    nombre: `Jabón ${nextNum}`,
+    pesoG: peso1,
+    ingredientes: JSON.parse(JSON.stringify(rows1))
+  }, true);
+}
+
+function duplicateSubFormulaCard(btn){
+  const card = btn.closest(".subformula-card");
+  if(!card) return;
+  const peso = parseFloat(card.querySelector(".sub-peso")?.value) || 100;
+  const rows = extractRowsFromTbody(card.querySelector("tbody"));
+  const nextNum = (document.querySelectorAll("#subformulas-container .subformula-card").length) + 2;
+  addSubFormulaBlock({
+    nombre: `Jabón ${nextNum}`,
+    pesoG: peso,
+    ingredientes: JSON.parse(JSON.stringify(rows))
+  }, true);
+}
+
+function removeSubFormulaCard(btn){
+  const card = btn.closest(".subformula-card");
+  if(!card) return;
+  if(!confirm("¿Quitar esta sub-fórmula del Kit?")) return;
+  card.remove();
+  const remaining = document.querySelectorAll("#subformulas-container .subformula-card").length;
+  const sub1Header = document.getElementById("kit-sub1-header");
+  if(remaining === 0 && sub1Header){
+    sub1Header.style.display = "none";
+  }
+  renumberSubFormulaCards();
+  updatePct();
+}
+
+function renumberSubFormulaCards(){
+  document.querySelectorAll("#subformulas-container .subformula-card").forEach((card, idx) => {
+    const badge = card.querySelector(".sub-badge-num");
+    if(badge) badge.textContent = `🧼 Sub-fórmula #${idx + 2}`;
+  });
+}
+
+function onSubFormulaWeightChange(){
+  updatePct();
+}
+
+function getSubFormulasFromEditor(){
+  const extraCards = [...document.querySelectorAll("#subformulas-container .subformula-card")];
+  if(extraCards.length === 0) return [];
+
+  const mainSub = {
+    id: "sub_1",
+    nombre: document.getElementById("sub1-nombre")?.value.trim() || "Jabón 1",
+    pesoG: Math.max(0.1, parseFloat(document.getElementById("sub1-peso")?.value) || 100),
+    ingredientes: extractRowsFromTbody(document.getElementById("ing-tbody"))
+  };
+
+  const extras = extraCards.map((card, idx) => ({
+    id: card.dataset.subId || ("sub_" + (idx + 2)),
+    nombre: card.querySelector(".sub-nombre")?.value.trim() || `Jabón ${idx + 2}`,
+    pesoG: Math.max(0.1, parseFloat(card.querySelector(".sub-peso")?.value) || 100),
+    ingredientes: extractRowsFromTbody(card.querySelector("tbody"))
+  }));
+
+  return [mainSub, ...extras];
+}
+
+function applyKitTotalWeightToLoteRef(showFeedback = true){
+  const subs = getSubFormulasFromEditor();
+  if(subs.length < 2) return;
+  const totalKitG = Math.round(subs.reduce((s, x) => s + (parseFloat(x.pesoG) || 0), 0) * 100) / 100;
+  if(totalKitG <= 0) return;
+
+  const loteRefEl = document.getElementById("f-lote-ref");
+  if(loteRefEl) loteRefEl.value = totalKitG;
+
+  // Si no hay presentaciones creadas aún, crear automáticamente la presentación del Kit completo
+  const presCards = document.querySelectorAll("#presentations-list .pres-item-card");
+  if(presCards.length === 0){
+    addPresentation({
+      nombre: `Kit x ${subs.length} (${totalKitG} g)`,
+      cantidad: totalKitG,
+      unidad: "g"
+    });
+  } else if(showFeedback && presCards.length === 1){
+    const cantInput = presCards[0].querySelector(".pres-cant");
+    const unitSel = presCards[0].querySelector(".pres-unit");
+    if(cantInput) cantInput.value = totalKitG;
+    if(unitSel) unitSel.value = "g";
+  }
   updateCosts();
 }
 
@@ -4829,39 +5070,96 @@ function autofillPrice(tr){
 function removeIngRow(btn){ btn.closest("tr").remove(); updatePct(); }
 
 function updatePct(){
+  // 1. Porcentaje de la tabla principal (Sub-fórmula #1 o única)
   const rows=document.querySelectorAll("#ing-tbody tr");
   let total=0;
   rows.forEach(r=>{ total+=parseFloat(r.querySelectorAll("input")[3]?.value||0)||0; });
   const el=document.getElementById("pct-total");
-  el.textContent=`Total: ${total.toFixed(2)}%`;
-  el.className="pct-total "+(Math.abs(total-100)<0.05?"pct-ok":total>100?"pct-over":"");
+  const extraCards = [...document.querySelectorAll("#subformulas-container .subformula-card")];
+  if(el){
+    const sub1Name = extraCards.length > 0 ? (document.getElementById("sub1-nombre")?.value.trim() || "Jabón 1") + ": " : "Total: ";
+    el.textContent=`${sub1Name}${total.toFixed(2)}%`;
+    el.className="pct-total "+(Math.abs(total-100)<0.05?"pct-ok":total>100?"pct-over":"");
+  }
+
+  // 2. Porcentaje de cada Sub-fórmula adicional (#2, #3, etc.)
+  extraCards.forEach(card => {
+    let subTot = 0;
+    card.querySelectorAll("tbody tr").forEach(r => {
+      subTot += parseFloat(r.querySelectorAll("input")[3]?.value || 0) || 0;
+    });
+    const badge = card.querySelector(".sub-pct-total");
+    if(badge){
+      badge.textContent = `Total: ${subTot.toFixed(2)}%`;
+      badge.className = "pct-total sub-pct-total " + (Math.abs(subTot - 100) < 0.05 ? "pct-ok" : subTot > 100 ? "pct-over" : "");
+    }
+  });
+
+  // 3. Banner resumen del Kit cuando hay múltiples sub-fórmulas
+  const kitBanner = document.getElementById("kit-summary-banner");
+  if(kitBanner){
+    if(extraCards.length > 0){
+      const subs = getSubFormulasFromEditor();
+      const totalKitG = Math.round(subs.reduce((s, x) => s + (parseFloat(x.pesoG) || 0), 0) * 100) / 100;
+      const breakdown = subs.map((s, idx) => `<strong>${esc(s.nombre || ("Jabón " + (idx+1)))}</strong> (${s.pesoG}g)`).join(" + ");
+      kitBanner.style.display = "block";
+      kitBanner.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+          <div>
+            <span style="color:var(--accent);font-weight:700">🎁 Modo Kit / Multipack Activo (${subs.length} componentes):</span>
+            ${breakdown} = <strong>${totalKitG} g por Kit</strong>
+          </div>
+          <button type="button" class="btn btn-primary btn-sm" onclick="applyKitTotalWeightToLoteRef(true)" title="Configura el Lote de Referencia y la Presentación del Kit en ${totalKitG} g">
+            ⚡ Fijar Kit en ${totalKitG} g
+          </button>
+        </div>`;
+    } else {
+      kitBanner.style.display = "none";
+    }
+  }
+
   updateSaveBtn(); updateCosts();
   const ings=getIngredientes().sort((a,b)=>(parseFloat(b.porcentaje)||0)-(parseFloat(a.porcentaje)||0));
-  const parts=ings.map(i=>i.inci||i.nombre).filter(Boolean);
+  const uniqueInci = [];
+  const seenInci = new Set();
+  ings.forEach(i => {
+    const label = (i.inci || i.nombre || "").trim();
+    const key = label.toLowerCase();
+    if(label && !seenInci.has(key)){
+      seenInci.add(key);
+      uniqueInci.push(label);
+    }
+  });
   const panel=document.getElementById("inci-display-panel");
   const txt=document.getElementById("inci-panel-text");
-  if(panel&&txt){ if(parts.length){ txt.textContent=parts.join(", "); panel.style.display="block"; } else panel.style.display="none"; }
+  if(panel&&txt){ if(uniqueInci.length){ txt.textContent=uniqueInci.join(", "); panel.style.display="block"; } else panel.style.display="none"; }
 }
 
 function updateSaveBtn(){ document.getElementById("btn-save").disabled=!document.getElementById("f-nombre").value.trim(); }
 
 function getIngredientes(){
-  return [...document.querySelectorAll("#ing-tbody tr")].map(r=>{
-    const inputs=r.querySelectorAll("input");
-    const sels=r.querySelectorAll("select");
-    const dVal = parseFloat(inputs[5]?.value) || null;
-    return {
-      id:r.dataset.id,
-      nombre:inputs[0].value.trim(),
-      inci:inputs[1].value.trim(),
-      proveedor:inputs[2]?.value.trim()||"",
-      fase:sels[0]?.value||"",
-      porcentaje:inputs[3].value,
-      precio:inputs[4]?.value||"",
-      unidadCosto:sels[1]?.value||"g",
-      densidadMP: dVal
-    };
-  }).filter(i=>i.nombre||i.inci);
+  const subs = getSubFormulasFromEditor();
+  if(subs.length > 1){
+    const totalKitG = subs.reduce((s, x) => s + (parseFloat(x.pesoG) || 0), 0) || 1;
+    const combined = [];
+    subs.forEach((sub, sIdx) => {
+      const share = (parseFloat(sub.pesoG) || 0) / totalKitG;
+      (sub.ingredientes || []).forEach(i => {
+        const rawPct = parseFloat(i.porcentaje) || 0;
+        const kitPct = Math.round((rawPct * share) * 10000) / 10000;
+        combined.push({
+          ...i,
+          porcentaje: String(kitPct),
+          subFormulaId: sub.id || `sub_${sIdx + 1}`,
+          subFormulaNombre: sub.nombre || `Jabón ${sIdx + 1}`,
+          subFormulaPesoG: parseFloat(sub.pesoG) || 100,
+          subFormulaPct: rawPct
+        });
+      });
+    });
+    return combined;
+  }
+  return extractRowsFromTbody(document.getElementById("ing-tbody"));
 }
 
 // ═══════════════════════════════════════════════
@@ -4978,33 +5276,90 @@ function updateCosts(){
   const fDensidad= parseFloat(document.getElementById("f-densidad")?.value)||1;
 
   let totalCostoMP=0; let hasAnyCost=false; let totalPct=0; let anyRow=false;
+  const extraCards = [...document.querySelectorAll("#subformulas-container .subformula-card")];
+  const isKitMode = extraCards.length > 0;
+  const invalidSubWarnings = [];
 
-  document.querySelectorAll("#ing-tbody tr").forEach(r=>{
-    const inputs=r.querySelectorAll("input");
-    const sels  =r.querySelectorAll("select");
-    const pct   = parseFloat(inputs[3]?.value)||0;
-    const precio= parseFloat(inputs[4]?.value)||0;
-    const unidad= sels[1]?.value||"g";
-    const dMP   = parseFloat(inputs[5]?.value) || getPreloadedDensity(inputs[0]?.value, inputs[1]?.value) || fDensidad;
-    const tdCost= r.querySelector(".td-ing-cost");
-    if(pct>0) anyRow=true;
-    totalPct+=pct;
-    if(precio>0 && pct>0){
-      hasAnyCost=true;
-      const gramos=(pct/100)*loteRef;
-      const cxg=costoAGramo(precio, unidad, dMP);
-      const costo=gramos*cxg;
-      totalCostoMP+=costo;
-      if(tdCost) tdCost.textContent=fmtMoney(costo);
-    } else {
-      if(tdCost) tdCost.textContent="—";
-    }
-  });
+  if(!isKitMode){
+    document.querySelectorAll("#ing-tbody tr").forEach(r=>{
+      const inputs=r.querySelectorAll("input");
+      const sels  =r.querySelectorAll("select");
+      const pct   = parseFloat(inputs[3]?.value)||0;
+      const precio= parseFloat(inputs[4]?.value)||0;
+      const unidad= sels[1]?.value||"g";
+      const dMP   = parseFloat(inputs[5]?.value) || getPreloadedDensity(inputs[0]?.value, inputs[1]?.value) || fDensidad;
+      const tdCost= r.querySelector(".td-ing-cost");
+      if(pct>0) anyRow=true;
+      totalPct+=pct;
+      if(precio>0 && pct>0){
+        hasAnyCost=true;
+        const gramos=(pct/100)*loteRef;
+        const cxg=costoAGramo(precio, unidad, dMP);
+        const costo=gramos*cxg;
+        totalCostoMP+=costo;
+        if(tdCost) tdCost.textContent=fmtMoney(costo);
+      } else {
+        if(tdCost) tdCost.textContent="—";
+      }
+    });
+  } else {
+    // Modo Kit con múltiples sub-fórmulas (cada una al 100%)
+    const peso1 = Math.max(0.1, parseFloat(document.getElementById("sub1-peso")?.value) || 100);
+    const nombre1 = document.getElementById("sub1-nombre")?.value.trim() || "Jabón 1";
+    const blocks = [
+      { nombre: nombre1, pesoG: peso1, rows: [...document.querySelectorAll("#ing-tbody tr")] },
+      ...extraCards.map((c, idx) => ({
+        nombre: c.querySelector(".sub-nombre")?.value.trim() || `Jabón ${idx + 2}`,
+        pesoG: Math.max(0.1, parseFloat(c.querySelector(".sub-peso")?.value) || 100),
+        rows: [...c.querySelectorAll("tbody tr")]
+      }))
+    ];
+    const totalKitG = blocks.reduce((s, b) => s + b.pesoG, 0) || 1;
+
+    blocks.forEach(b => {
+      const share = b.pesoG / totalKitG;
+      const subLoteG = loteRef * share;
+      let subPct = 0;
+      let subAnyRow = false;
+      b.rows.forEach(r => {
+        const inputs = r.querySelectorAll("input");
+        const sels   = r.querySelectorAll("select");
+        const pct    = parseFloat(inputs[3]?.value) || 0;
+        const precio = parseFloat(inputs[4]?.value) || 0;
+        const unidad = sels[1]?.value || "g";
+        const dMP    = parseFloat(inputs[5]?.value) || getPreloadedDensity(inputs[0]?.value, inputs[1]?.value) || fDensidad;
+        const tdCost = r.querySelector(".td-ing-cost");
+        if(pct > 0) { anyRow = true; subAnyRow = true; }
+        subPct += pct;
+        if(precio > 0 && pct > 0){
+          hasAnyCost = true;
+          const gramos = (pct / 100) * subLoteG;
+          const cxg = costoAGramo(precio, unidad, dMP);
+          const costo = gramos * cxg;
+          totalCostoMP += costo;
+          if(tdCost) tdCost.textContent = fmtMoney(costo);
+        } else {
+          if(tdCost) tdCost.textContent = "—";
+        }
+      });
+      if(subAnyRow && Math.abs(subPct - 100) > 0.5){
+        invalidSubWarnings.push(`"${b.nombre}" suma ${subPct.toFixed(2)}% (${subPct > 100 ? 'excede por ' + (subPct - 100).toFixed(2) + '%' : 'falta ' + (100 - subPct).toFixed(2) + '%'})`);
+      }
+    });
+    totalPct = 100;
+  }
 
   // Validar que la suma de porcentajes de los ingredientes sea ~100%
   const pctWarn = document.getElementById("pct-warning");
   if(pctWarn){
-    if(anyRow && Math.abs(totalPct-100)>0.5){
+    if(isKitMode){
+      if(invalidSubWarnings.length > 0){
+        pctWarn.style.display = "block";
+        pctWarn.textContent = `⚠ Revisa las sub-fórmulas del Kit (cada una debe sumar 100%): ${invalidSubWarnings.join(" · ")}.`;
+      } else {
+        pctWarn.style.display = "none";
+      }
+    } else if(anyRow && Math.abs(totalPct-100)>0.5){
       pctWarn.style.display="block";
       pctWarn.textContent = totalPct>100
         ? `⚠ La suma de porcentajes es ${totalPct.toFixed(2)}%, excede el 100% por ${(totalPct-100).toFixed(2)} puntos. Los costos calculados no son válidos hasta corregir.`
@@ -5110,13 +5465,12 @@ function computeCostSnapshot(){
   const margen  = (parseFloat(document.getElementById("f-margen")?.value)||0)/100;
   const fDensidad = parseFloat(document.getElementById("f-densidad")?.value)||1;
   let totalCostoMP=0; let hasAnyCost=false;
-  document.querySelectorAll("#ing-tbody tr").forEach(r=>{
-    const inputs=r.querySelectorAll("input");
-    const sels=r.querySelectorAll("select");
-    const pct=parseFloat(inputs[3]?.value)||0;
-    const precio=parseFloat(inputs[4]?.value)||0;
-    const unidad=sels[1]?.value||"g";
-    const dMP=parseFloat(inputs[5]?.value) || getPreloadedDensity(inputs[0]?.value, inputs[1]?.value) || fDensidad;
+  const effectiveIngs = getIngredientes();
+  effectiveIngs.forEach(i=>{
+    const pct = parseFloat(i.porcentaje)||0;
+    const precio = parseFloat(i.precio)||0;
+    const unidad = i.unidadCosto||"g";
+    const dMP = parseFloat(i.densidadMP) || getPreloadedDensity(i.nombre, i.inci) || fDensidad;
     if(precio>0&&pct>0){ hasAnyCost=true; totalCostoMP+=((pct/100)*loteRef)*costoAGramo(precio,unidad,dMP); }
   });
   const otherTotal = getOtherCosts().reduce((s,o)=>s+o.valor,0);
@@ -5197,6 +5551,8 @@ function buildFormulaFromEditor(existing, opts){
     });
   }
   const {costoPer100,pvpPer100,presentaciones: calculatedPres}=computeCostSnapshot();
+  const subFormulas = getSubFormulasFromEditor();
+  const rawIngs = getIngredientes();
   return {
     id: (existing && existing.id) ? existing.id : (editingId || uid()),
     nombre,
@@ -5211,7 +5567,8 @@ function buildFormulaFromEditor(existing, opts){
     densidad: parseFloat(document.getElementById("f-densidad").value)||1,
     margen: parseFloat(document.getElementById("f-margen").value)||40,
     costoPer100, pvpPer100,
-    ingredientes: getIngredientes().sort((a,b)=>(parseFloat(b.porcentaje)||0)-(parseFloat(a.porcentaje)||0)),
+    subFormulas: subFormulas.length > 1 ? subFormulas : [],
+    ingredientes: subFormulas.length > 1 ? rawIngs : rawIngs.sort((a,b)=>(parseFloat(b.porcentaje)||0)-(parseFloat(a.porcentaje)||0)),
     procedimiento: getProcSteps(),
     otrosCostos: getOtherCosts(),
     presentaciones: (calculatedPres && calculatedPres.length) ? calculatedPres : getPresentations(),
@@ -5389,7 +5746,8 @@ function deleteFormula(id){
 // ═══════════════════════════════════════════════
 // INCI
 // ═══════════════════════════════════════════════
-function openInciModal(){
+function openInciModal(targetTbodyId = "ing-tbody"){
+  activeInciTargetTbody = targetTbodyId || "ing-tbody";
   document.getElementById("inci-modal-query").value="";
   document.getElementById("inci-result-modal").style.display="none";
   document.getElementById("inci-error-m").style.display="none";
@@ -5434,7 +5792,7 @@ function addInciToForm(){
     fase:lastInciData.fase?.split(" ")[0]||"",
     porcentaje:"",
     densidadMP: dSugg
-  });
+  }, activeInciTargetTbody || "ing-tbody");
   updatePct(); closeModal("modal-inci");
 }
 
@@ -5619,11 +5977,22 @@ function renderLote(opts = {}){
 
   let html = `<div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">1. Materias Primas Cosméticas (A granel)</div>`;
 
-  const renderGroup = (label, ings) => {
+  // Calcular requerimiento total acumulado por insumo en el lote (por si 2 o más jabones del Kit comparten la misma glicerina o insumo)
+  const totalReqGramosByKey = {};
+  (f.ingredientes || []).forEach(i => {
+    const pct = parseFloat(i.porcentaje) || 0;
+    const gr = (pct / 100) * g;
+    const key = resolveCanonicalInsumoKey(i.nombre, i.inci, idx) || priceKey(i.nombre || i.inci);
+    totalReqGramosByKey[key] = (totalReqGramosByKey[key] || 0) + gr;
+  });
+  const reportedFaltanteKeys = new Set();
+
+  const renderGroup = (label, ings, isSubFormulaMode = false) => {
     if(!ings.length) return;
-    html += `<div class="fase-group"><div class="fase-label" style="font-weight:700">${esc(label)}</div>`;
+    html += `<div class="fase-group"><div class="fase-label" style="font-weight:700;${isSubFormulaMode ? 'color:var(--accent);font-size:12px' : ''}">${esc(label)}</div>`;
     ings.forEach(i => {
       const pct = parseFloat(i.porcentaje) || 0;
+      const displayPct = (isSubFormulaMode && i.subFormulaPct !== undefined) ? parseFloat(i.subFormulaPct) : pct;
       const gr = (pct / 100 * g);
       const key = resolveCanonicalInsumoKey(i.nombre, i.inci, idx);
       const raw = idx[key] || priceDB[key] || {};
@@ -5637,17 +6006,19 @@ function renderLote(opts = {}){
       const stockVal = (raw.stock !== undefined && raw.stock !== null) ? raw.stock : 0;
       const uStock = raw.unidadStock || raw.unidad || "g";
       const stockGramos = toGramos(stockVal, uStock, dMP);
-      const isSuficiente = stockGramos >= (gr - 0.001);
-      const faltaG = Math.max(0, gr - stockGramos);
+      const totalReqForKey = totalReqGramosByKey[key || priceKey(i.nombre || i.inci)] || gr;
+      const isSuficiente = stockGramos >= (totalReqForKey - 0.001);
+      const faltaG = Math.max(0, totalReqForKey - stockGramos);
 
-      if(!isSuficiente){
-        faltantes.push({ nombre: i.nombre || i.inci, requerido: gr, disponibleG: stockGramos, falta: faltaG, unidad: uStock, tipo: "Materia Prima" });
+      if(!isSuficiente && !reportedFaltanteKeys.has(key || i.nombre)){
+        reportedFaltanteKeys.add(key || i.nombre);
+        faltantes.push({ nombre: i.nombre || i.inci, requerido: totalReqForKey, disponibleG: stockGramos, falta: faltaG, unidad: uStock, tipo: "Materia Prima" });
       }
 
-      html += `<div class="lote-row" style="display:grid;grid-template-columns:2fr 2fr 45px 75px 85px 85px 70px;gap:6px;align-items:center;font-size:12px;padding:6px 0;border-bottom:1px solid var(--border)">
+      html += `<div class="lote-row" style="display:grid;grid-template-columns:2fr 2fr 55px 75px 85px 85px 70px;gap:6px;align-items:center;font-size:12px;padding:6px 0;border-bottom:1px solid var(--border)">
         <span style="font-weight:500">${esc(i.nombre || i.inci)}</span>
         <span class="l-inci" style="font-size:10.5px;color:var(--muted)">${esc(i.inci || "—")}</span>
-        <span style="text-align:center">${pct}%</span>
+        <span style="text-align:center" title="${isSubFormulaMode ? '% dentro de esta sub-fórmula (100%)' : '% en la fórmula'}">${displayPct}%</span>
         <span class="l-g" style="text-align:right;font-weight:600">${gr.toFixed(2)} g</span>
         <span style="text-align:right;font-size:11px;font-family:var(--fm);${!isSuficiente?'color:var(--danger);font-weight:700':''}">${stockVal} ${uStock}</span>
         <span style="text-align:center">
@@ -5662,8 +6033,22 @@ function renderLote(opts = {}){
     html += `</div>`;
   };
 
-  PHASES.slice(1).forEach(fase => renderGroup(fase, f.ingredientes.filter(i => (i.fase || "") === fase)));
-  renderGroup("Sin fase", f.ingredientes.filter(i => !i.fase));
+  const hasSubFormulasInIngs = (f.ingredientes || []).some(i => i.subFormulaNombre);
+  if(hasSubFormulasInIngs){
+    const subNames = [];
+    (f.ingredientes || []).forEach(i => {
+      const sn = i.subFormulaNombre || "Componente";
+      if(!subNames.includes(sn)) subNames.push(sn);
+    });
+    subNames.forEach((sn, sIdx) => {
+      const subIngs = f.ingredientes.filter(i => (i.subFormulaNombre || "Componente") === sn);
+      const subGramosLote = subIngs.reduce((s, i) => s + ((parseFloat(i.porcentaje) || 0) / 100 * g), 0);
+      renderGroup(`🧼 ${sIdx + 1}. ${sn} (100% — ${subGramosLote.toFixed(1)} g en este lote)`, subIngs, true);
+    });
+  } else {
+    PHASES.slice(1).forEach(fase => renderGroup(fase, f.ingredientes.filter(i => (i.fase || "") === fase)));
+    renderGroup("Sin fase", f.ingredientes.filter(i => !i.fase));
+  }
 
   const totPct = f.ingredientes.reduce((s, i) => s + (parseFloat(i.porcentaje) || 0), 0);
   html += `<div class="lote-total" style="display:grid;grid-template-columns:2fr 2fr 45px 75px 85px 85px 70px;gap:6px;font-size:12px;padding:8px 0;font-weight:700;border-top:2px solid var(--border);margin-bottom:16px">
@@ -6593,26 +6978,56 @@ async function printLote(){
         <tbody>
           ${(() => {
             let out = "";
-            const phases = [...PHASES.slice(1), ""];
-            phases.forEach(fase => {
-              const ings = f.ingredientes.filter(i=>(i.fase||"")===fase);
-              if(!ings.length) return;
-              out += `<tr><td colspan="8" style="background:#f5f7f2;font-weight:700;font-size:10px;text-transform:uppercase;color:#334;padding:4px 6px">${fase||"Fase Única"}</td></tr>`;
-              ings.forEach(i => {
-                const pct = parseFloat(i.porcentaje)||0;
-                const gr = (pct/100*g).toFixed(2);
-                out += `<tr>
-                  <td style="font-weight:600">${esc(i.nombre||"")}</td>
-                  <td style="color:#555;font-size:10px">${esc(i.inci||"")}</td>
-                  <td style="text-align:center">${pct}%</td>
-                  <td style="text-align:right;font-weight:600">${gr} g</td>
-                  <td style="border:1px solid #aaa;background:#fff;text-align:right"></td>
-                  <td style="border:1px solid #aaa;background:#fff"></td>
-                  <td style="border:1px solid #aaa;background:#fff"></td>
-                  <td style="border:1px solid #aaa;background:#fff"></td>
-                </tr>`;
+            const hasSubFormulasInIngs = (f.ingredientes || []).some(i => i.subFormulaNombre);
+            if(hasSubFormulasInIngs){
+              const subNames = [];
+              (f.ingredientes || []).forEach(i => {
+                const sn = i.subFormulaNombre || "Componente";
+                if(!subNames.includes(sn)) subNames.push(sn);
               });
-            });
+              subNames.forEach((sn, sIdx) => {
+                const ings = f.ingredientes.filter(i => (i.subFormulaNombre || "Componente") === sn);
+                if(!ings.length) return;
+                const subGramos = ings.reduce((s, i) => s + ((parseFloat(i.porcentaje)||0)/100*g), 0);
+                out += `<tr><td colspan="8" style="background:#e8f0df;font-weight:700;font-size:10.5px;text-transform:uppercase;color:#1a2216;padding:5px 6px">🧼 SUB-FÓRMULA ${sIdx + 1}: ${esc(sn)} (100% — Masa en este lote: ${subGramos.toFixed(2)} g)</td></tr>`;
+                ings.forEach(i => {
+                  const pct = parseFloat(i.porcentaje)||0;
+                  const dispPct = (i.subFormulaPct !== undefined) ? parseFloat(i.subFormulaPct) : pct;
+                  const gr = (pct/100*g).toFixed(2);
+                  out += `<tr>
+                    <td style="font-weight:600">${esc(i.nombre||"")} ${i.fase ? `<span style="color:#666;font-weight:400;font-size:9.5px">(${esc(i.fase)})</span>` : ""}</td>
+                    <td style="color:#555;font-size:10px">${esc(i.inci||"")}</td>
+                    <td style="text-align:center">${dispPct}%</td>
+                    <td style="text-align:right;font-weight:600">${gr} g</td>
+                    <td style="border:1px solid #aaa;background:#fff;text-align:right"></td>
+                    <td style="border:1px solid #aaa;background:#fff"></td>
+                    <td style="border:1px solid #aaa;background:#fff"></td>
+                    <td style="border:1px solid #aaa;background:#fff"></td>
+                  </tr>`;
+                });
+              });
+            } else {
+              const phases = [...PHASES.slice(1), ""];
+              phases.forEach(fase => {
+                const ings = f.ingredientes.filter(i=>(i.fase||"")===fase);
+                if(!ings.length) return;
+                out += `<tr><td colspan="8" style="background:#f5f7f2;font-weight:700;font-size:10px;text-transform:uppercase;color:#334;padding:4px 6px">${fase||"Fase Única"}</td></tr>`;
+                ings.forEach(i => {
+                  const pct = parseFloat(i.porcentaje)||0;
+                  const gr = (pct/100*g).toFixed(2);
+                  out += `<tr>
+                    <td style="font-weight:600">${esc(i.nombre||"")}</td>
+                    <td style="color:#555;font-size:10px">${esc(i.inci||"")}</td>
+                    <td style="text-align:center">${pct}%</td>
+                    <td style="text-align:right;font-weight:600">${gr} g</td>
+                    <td style="border:1px solid #aaa;background:#fff;text-align:right"></td>
+                    <td style="border:1px solid #aaa;background:#fff"></td>
+                    <td style="border:1px solid #aaa;background:#fff"></td>
+                    <td style="border:1px solid #aaa;background:#fff"></td>
+                  </tr>`;
+                });
+              });
+            }
             out += `<tr style="font-weight:700;background:#eef2e6">
               <td colspan="2">TOTAL FORMULACIÓN</td>
               <td style="text-align:center">${totalPct.toFixed(2)}%</td>
